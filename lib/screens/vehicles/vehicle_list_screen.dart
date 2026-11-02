@@ -1,13 +1,17 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive.dart';
+import '../../data/mock_data.dart';
 import '../../data/vehicle_repository.dart';
 import '../../models/vehicle.dart';
 import '../../router/app_router.dart';
+import '../../widgets/app_shell.dart';
 import '../../widgets/confirmation_dialog.dart';
-import '../../widgets/stat_card.dart';
 import '../../widgets/status_badge.dart';
 
-/// Primary Fleet Management screen displaying all registered vehicles.
+/// Primary Fleet Management screen displaying all registered vehicles with
+/// local search, multi-attribute filtering, sorting, pagination, and deletion.
 class VehicleListScreen extends StatefulWidget {
   const VehicleListScreen({super.key});
 
@@ -17,8 +21,15 @@ class VehicleListScreen extends StatefulWidget {
 
 class _VehicleListScreenState extends State<VehicleListScreen> {
   final _searchController = TextEditingController();
+
   VehicleStatus? _statusFilter;
-  VehicleType? _typeFilter;
+  String? _companyFilter = 'All Companies';
+
+  VehicleSortField _sortField = VehicleSortField.vehicleNumber;
+  bool _sortAscending = true;
+
+  int _currentPage = 1;
+  static const int _pageSize = 10;
 
   @override
   void dispose() {
@@ -26,34 +37,44 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     super.dispose();
   }
 
+  bool get _hasActiveFilters =>
+      _searchController.text.trim().isNotEmpty ||
+      _statusFilter != null ||
+      (_companyFilter != null && _companyFilter != 'All Companies');
+
   void _clearFilters() {
     setState(() {
       _searchController.clear();
       _statusFilter = null;
-      _typeFilter = null;
+      _companyFilter = 'All Companies';
+      _currentPage = 1;
     });
   }
 
-  bool get _hasActiveFilters =>
-      _searchController.text.isNotEmpty ||
-      _statusFilter != null ||
-      _typeFilter != null;
+  void _toggleSort(VehicleSortField field) {
+    setState(() {
+      if (_sortField == field) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortField = field;
+        _sortAscending = true;
+      }
+      _currentPage = 1;
+    });
+  }
 
-  Future<void> _confirmDelete(Vehicle vehicle) async {
-    final confirmed = await ConfirmationDialog.show(
+  Future<void> _handleDelete(Vehicle vehicle) async {
+    final confirmed = await ConfirmationDialog.showDelete(
       context,
-      title: 'Delete Vehicle',
-      message:
-          'Are you sure you want to remove ${vehicle.plateNumber} (${vehicle.fullName}) from the fleet registry? This action cannot be undone.',
-      confirmLabel: 'Delete Vehicle',
-      isDestructive: true,
+      vehicleNumber: vehicle.vehicleNumber,
+      company: vehicle.company,
     );
 
     if (confirmed && mounted) {
       VehicleRepository.instance.delete(vehicle.id);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Vehicle ${vehicle.plateNumber} was deleted'),
+          content: Text('Vehicle ${vehicle.vehicleNumber} was removed from the fleet.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -63,190 +84,153 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
   @override
   Widget build(BuildContext context) {
     final repo = VehicleRepository.instance;
+    final isDesktop = Responsive.isDesktop(context);
 
     return ListenableBuilder(
       listenable: repo,
       builder: (context, _) {
-        final filteredVehicles = repo.filter(
+        final queryResults = repo.query(
           searchQuery: _searchController.text,
           statusFilter: _statusFilter,
-          typeFilter: _typeFilter,
+          companyFilter: _companyFilter,
+          sortField: _sortField,
+          sortAscending: _sortAscending,
         );
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(context),
-              const SizedBox(height: 24),
-              _buildKpiMetrics(context, repo),
-              const SizedBox(height: 24),
-              _buildFilterBar(context),
-              const SizedBox(height: 16),
-              if (filteredVehicles.isEmpty)
-                _buildEmptyState(context)
-              else if (Responsive.isDesktop(context) || Responsive.isTablet(context))
-                _buildDesktopTable(context, filteredVehicles)
-              else
-                _buildMobileCardList(context, filteredVehicles),
-            ],
+        final totalMatches = queryResults.length;
+        final totalPages = max(1, (totalMatches / _pageSize).ceil());
+
+        // Auto-adjust page if current page exceeds total pages
+        if (_currentPage > totalPages) {
+          _currentPage = totalPages;
+        }
+
+        final startIndex = (_currentPage - 1) * _pageSize;
+        final endIndex = min(startIndex + _pageSize, totalMatches);
+        final paginatedVehicles = totalMatches > 0
+            ? queryResults.sublist(startIndex, endIndex)
+            : <Vehicle>[];
+
+        return AppShell(
+          title: 'Vehicles',
+          primaryAction: ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(context).pushNamed(AppRouter.vehicleNewRoute);
+            },
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(isDesktop ? 'Register vehicle' : 'Register'),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(AppTheme.space24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildHeader(repo.totalCount),
+                const SizedBox(height: AppTheme.space20),
+                _buildToolbar(),
+                const SizedBox(height: AppTheme.space16),
+                if (repo.totalCount == 0)
+                  _buildNoVehiclesRegistered()
+                else if (totalMatches == 0)
+                  _buildNoMatchingResults()
+                else ...[
+                  if (MediaQuery.sizeOf(context).width >= 850)
+                    _buildDesktopTable(paginatedVehicles)
+                  else
+                    _buildMobileCards(paginatedVehicles),
+                  const SizedBox(height: AppTheme.space16),
+                  _buildPaginationControls(
+                    startIndex: startIndex + 1,
+                    endIndex: endIndex,
+                    totalMatches: totalMatches,
+                    totalPages: totalPages,
+                  ),
+                ],
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
-    final theme = Theme.of(context);
-    final isMobile = Responsive.isMobile(context);
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      crossAxisAlignment:
-          isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+  Widget _buildHeader(int totalCount) {
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.end,
+      spacing: AppTheme.space16,
+      runSpacing: AppTheme.space12,
       children: [
-        Expanded(
-          child: Column(
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Fleet Vehicles',
-                style: theme.textTheme.headlineSmall?.copyWith(
+                'Fleet Registry',
+                style: TextStyle(
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  letterSpacing: -0.5,
+                  color: AppTheme.textDark,
                 ),
               ),
-              const SizedBox(height: 4),
+              SizedBox(height: 2),
               Text(
-                'Monitor, filter, and maintain active vehicle registrations.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: Colors.grey[600],
-                ),
+                'Manage and monitor registered fleet vehicles across all Stark Group companies.',
+                style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
               ),
             ],
           ),
         ),
-        const SizedBox(width: 16),
-        ElevatedButton.icon(
-          onPressed: () {
-            Navigator.of(context).pushNamed(AppRouter.vehicleNewRoute);
-          },
-          icon: const Icon(Icons.add, size: 20),
-          label: Text(isMobile ? 'Register' : 'Register Vehicle'),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppTheme.borderSubtle,
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+            border: Border.all(color: AppTheme.borderNeutral),
+          ),
+          child: Text(
+            'Total: $totalCount vehicles',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textMuted,
+            ),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildKpiMetrics(BuildContext context, VehicleRepository repo) {
-    final isDesktop = Responsive.isDesktop(context);
-    final isTablet = Responsive.isTablet(context);
-
-    final cards = [
-      StatCard(
-        title: 'Total Fleet',
-        value: repo.totalCount.toString(),
-        icon: Icons.directions_car_rounded,
-        color: const Color(0xFF1E40AF),
-        subtitle: 'Registered assets',
-      ),
-      StatCard(
-        title: 'Active in Field',
-        value: repo.activeCount.toString(),
-        icon: Icons.check_circle_outline,
-        color: const Color(0xFF10B981),
-        subtitle: '${((repo.activeCount / (repo.totalCount == 0 ? 1 : repo.totalCount)) * 100).round()}% fleet availability',
-      ),
-      StatCard(
-        title: 'In Maintenance',
-        value: repo.maintenanceCount.toString(),
-        icon: Icons.build_outlined,
-        color: const Color(0xFFF59E0B),
-        subtitle: 'Scheduled or repair',
-      ),
-      StatCard(
-        title: 'Avg Fleet Odometer',
-        value: '${(repo.averageMileage / 1000).toStringAsFixed(1)}k km',
-        icon: Icons.speed_outlined,
-        color: const Color(0xFF8B5CF6),
-        subtitle: 'Across all units',
-      ),
-    ];
-
-    if (isDesktop) {
-      return Row(
-        children: cards
-            .map((c) => Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 16),
-                    child: c,
-                  ),
-                ))
-            .toList()
-          ..last = Expanded(child: cards.last),
-      );
-    } else if (isTablet) {
-      return Column(
-        children: [
-          Row(
-            children: [
-              Expanded(child: cards[0]),
-              const SizedBox(width: 16),
-              Expanded(child: cards[1]),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(child: cards[2]),
-              const SizedBox(width: 16),
-              Expanded(child: cards[3]),
-            ],
-          ),
-        ],
-      );
-    } else {
-      return Column(
-        children: cards
-            .map((c) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: c,
-                ))
-            .toList(),
-      );
-    }
-  }
-
-  Widget _buildFilterBar(BuildContext context) {
-    final isDesktop = Responsive.isDesktop(context);
+  Widget _buildToolbar() {
+    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppTheme.space16),
         child: isDesktop
             ? Row(
                 children: [
                   Expanded(
                     flex: 3,
-                    child: _buildSearchTextField(),
+                    child: _buildSearchInput(),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: AppTheme.space16),
+                  Expanded(
+                    flex: 2,
+                    child: _buildCompanyDropdown(),
+                  ),
+                  const SizedBox(width: AppTheme.space16),
                   Expanded(
                     flex: 2,
                     child: _buildStatusDropdown(),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    flex: 2,
-                    child: _buildTypeDropdown(),
-                  ),
                   if (_hasActiveFilters) ...[
-                    const SizedBox(width: 12),
+                    const SizedBox(width: AppTheme.space12),
                     TextButton.icon(
                       onPressed: _clearFilters,
-                      icon: const Icon(Icons.clear, size: 18),
-                      label: const Text('Reset'),
+                      icon: const Icon(Icons.close, size: 16),
+                      label: const Text('Clear filters'),
                     ),
                   ],
                 ],
@@ -254,23 +238,23 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildSearchTextField(),
-                  const SizedBox(height: 12),
+                  _buildSearchInput(),
+                  const SizedBox(height: AppTheme.space12),
                   Row(
                     children: [
+                      Expanded(child: _buildCompanyDropdown()),
+                      const SizedBox(width: AppTheme.space12),
                       Expanded(child: _buildStatusDropdown()),
-                      const SizedBox(width: 12),
-                      Expanded(child: _buildTypeDropdown()),
                     ],
                   ),
                   if (_hasActiveFilters) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppTheme.space8),
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
                         onPressed: _clearFilters,
-                        icon: const Icon(Icons.clear, size: 16),
-                        label: const Text('Clear Filters'),
+                        icon: const Icon(Icons.close, size: 16),
+                        label: const Text('Clear filters'),
                       ),
                     ),
                   ],
@@ -280,23 +264,53 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildSearchTextField() {
+  Widget _buildSearchInput() {
     return TextField(
       controller: _searchController,
-      onChanged: (_) => setState(() {}),
       decoration: InputDecoration(
-        hintText: 'Search by plate, make, model, VIN, or driver...',
-        prefixIcon: const Icon(Icons.search, size: 20),
+        hintText: 'Search by vehicle number, company, brand, or model...',
+        prefixIcon: const Icon(Icons.search, size: 18, color: AppTheme.textMuted),
         suffixIcon: _searchController.text.isNotEmpty
             ? IconButton(
-                icon: const Icon(Icons.close, size: 18),
+                icon: const Icon(Icons.clear, size: 16),
+                tooltip: 'Clear search query',
                 onPressed: () {
                   _searchController.clear();
-                  setState(() {});
+                  setState(() => _currentPage = 1);
                 },
               )
             : null,
       ),
+      onChanged: (_) => setState(() => _currentPage = 1),
+    );
+  }
+
+  Widget _buildCompanyDropdown() {
+    return DropdownButtonFormField<String>(
+      key: ValueKey(_companyFilter),
+      initialValue: _companyFilter,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      ),
+      items: [
+        const DropdownMenuItem(
+          value: 'All Companies',
+          child: Text('All Companies', style: TextStyle(fontSize: 13)),
+        ),
+        ...mockCompanies.map(
+          (c) => DropdownMenuItem(
+            value: c,
+            child: Text(c, style: const TextStyle(fontSize: 13)),
+          ),
+        ),
+      ],
+      onChanged: (val) {
+        setState(() {
+          _companyFilter = val;
+          _currentPage = 1;
+        });
+      },
     );
   }
 
@@ -306,13 +320,12 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
       initialValue: _statusFilter,
       isExpanded: true,
       decoration: const InputDecoration(
-        labelText: 'Filter by Status',
-        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       ),
       items: [
         const DropdownMenuItem(
           value: null,
-          child: Text('All Statuses'),
+          child: Text('All Statuses', style: TextStyle(fontSize: 13)),
         ),
         ...VehicleStatus.values.map(
           (s) => DropdownMenuItem(
@@ -320,269 +333,280 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             child: Row(
               children: [
                 Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(color: s.color, shape: BoxShape.circle),
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(color: s.dotColor, shape: BoxShape.circle),
                 ),
-                const SizedBox(width: 8),
-                Text(s.displayName),
+                const SizedBox(width: 6),
+                Text(s.label, style: const TextStyle(fontSize: 13)),
               ],
             ),
           ),
         ),
       ],
-      onChanged: (val) => setState(() => _statusFilter = val),
+      onChanged: (val) {
+        setState(() {
+          _statusFilter = val;
+          _currentPage = 1;
+        });
+      },
     );
   }
 
-  Widget _buildTypeDropdown() {
-    return DropdownButtonFormField<VehicleType?>(
-      key: ValueKey(_typeFilter),
-      initialValue: _typeFilter,
-      isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Filter by Body Type',
-        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      ),
-      items: [
-        const DropdownMenuItem(
-          value: null,
-          child: Text('All Body Types'),
-        ),
-        ...VehicleType.values.map(
-          (t) => DropdownMenuItem(
-            value: t,
-            child: Text(t.displayName),
-          ),
-        ),
-      ],
-      onChanged: (val) => setState(() => _typeFilter = val),
-    );
-  }
-
-  Widget _buildDesktopTable(BuildContext context, List<Vehicle> vehicles) {
-    final theme = Theme.of(context);
-
+  Widget _buildDesktopTable(List<Vehicle> vehicles) {
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Registry Entries (${vehicles.length})',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey[700],
-                  ),
-                ),
-                Text(
-                  'Click edit to modify details',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[500],
-                  ),
-                ),
-              ],
-            ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 880),
+          child: Table(
+            columnWidths: const {
+              0: FixedColumnWidth(140), // Vehicle Number
+              1: FlexColumnWidth(2.0),  // Company
+              2: FixedColumnWidth(90),  // Type
+              3: FlexColumnWidth(1.4),  // Brand
+              4: FlexColumnWidth(1.6),  // Model
+              5: FixedColumnWidth(130), // Status
+              6: FixedColumnWidth(110), // Actions
+            },
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: [
+              _buildTableHeaderRow(),
+              ...vehicles.map((v) => _buildTableRow(v)),
+            ],
           ),
-          const Divider(height: 1),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 950),
-              child: DataTable(
-                columnSpacing: 24,
-                columns: const [
-                  DataColumn(label: Text('VEHICLE')),
-                  DataColumn(label: Text('PLATE / VIN')),
-                  DataColumn(label: Text('TYPE & FUEL')),
-                  DataColumn(label: Text('STATUS')),
-                  DataColumn(label: Text('ODOMETER')),
-                  DataColumn(label: Text('ASSIGNED DRIVER')),
-                  DataColumn(label: Text('ACTIONS')),
-                ],
-                rows: vehicles.map((vehicle) {
-                  return DataRow(
-                    cells: [
-                      // Vehicle Make/Model
-                      DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            CircleAvatar(
-                              radius: 16,
-                              backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
-                              child: Icon(vehicle.type.icon, size: 18, color: theme.colorScheme.primary),
-                            ),
-                            const SizedBox(width: 12),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  '${vehicle.make} ${vehicle.model}',
-                                  style: const TextStyle(fontWeight: FontWeight.w600),
-                                ),
-                                Text(
-                                  'Model Year: ${vehicle.year}',
-                                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Plate & VIN
-                      DataCell(
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[200],
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: Colors.grey[400]!),
-                              ),
-                              child: Text(
-                                vehicle.plateNumber,
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              vehicle.vin,
-                              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Type & Fuel
-                      DataCell(
-                        Text('${vehicle.type.displayName} • ${vehicle.fuelType.displayName}'),
-                      ),
-                      // Status
-                      DataCell(
-                        StatusBadge(status: vehicle.status),
-                      ),
-                      // Mileage
-                      DataCell(
-                        Text(vehicle.formattedMileage),
-                      ),
-                      // Driver
-                      DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.person_outline,
-                              size: 16,
-                              color: vehicle.assignedDriver != null ? Colors.blueGrey : Colors.grey,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              vehicle.assignedDriver ?? 'Unassigned',
-                              style: TextStyle(
-                                fontStyle: vehicle.assignedDriver == null ? FontStyle.italic : FontStyle.normal,
-                                color: vehicle.assignedDriver == null ? Colors.grey : null,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Actions
-                      DataCell(
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit_outlined, size: 18),
-                              tooltip: 'Edit Vehicle',
-                              onPressed: () {
-                                Navigator.of(context).pushNamed(
-                                  AppRouter.vehicleEditRoute,
-                                  arguments: vehicle,
-                                );
-                              },
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, size: 18),
-                              color: theme.colorScheme.error,
-                              tooltip: 'Delete Vehicle',
-                              onPressed: () => _confirmDelete(vehicle),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                }).toList(),
+        ),
+      ),
+    );
+  }
+
+  TableRow _buildTableHeaderRow() {
+    return TableRow(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8FAFC),
+        border: Border(bottom: BorderSide(color: AppTheme.borderNeutral, width: 1)),
+      ),
+      children: [
+        _buildSortableHeaderCell('VEHICLE NUMBER', VehicleSortField.vehicleNumber),
+        _buildSortableHeaderCell('COMPANY', VehicleSortField.company),
+        _buildStaticHeaderCell('TYPE'),
+        _buildStaticHeaderCell('BRAND'),
+        _buildStaticHeaderCell('MODEL'),
+        _buildStaticHeaderCell('STATUS'),
+        _buildStaticHeaderCell('ACTIONS', alignRight: true),
+      ],
+    );
+  }
+
+  Widget _buildSortableHeaderCell(String label, VehicleSortField field) {
+    final isSorted = _sortField == field;
+
+    return InkWell(
+      onTap: () => _toggleSort(field),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: isSorted ? AppTheme.primaryBlue : AppTheme.textMuted,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              isSorted
+                  ? (_sortAscending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded)
+                  : Icons.unfold_more_rounded,
+              size: 14,
+              color: isSorted ? AppTheme.primaryBlue : AppTheme.textDisabled,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStaticHeaderCell(String label, {bool alignRight = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Text(
+        label,
+        textAlign: alignRight ? TextAlign.right : TextAlign.left,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: AppTheme.textMuted,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  TableRow _buildTableRow(Vehicle vehicle) {
+    return TableRow(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: AppTheme.borderSubtle, width: 1)),
+      ),
+      children: [
+        // Vehicle Number
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                border: Border.all(color: AppTheme.borderNeutral),
+              ),
+              child: Text(
+                vehicle.vehicleNumber,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textDark,
+                ),
               ),
             ),
           ),
-        ],
-      ),
+        ),
+        // Company
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Text(
+            vehicle.company,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+        ),
+        // Type
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Text(
+            vehicle.type,
+            style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
+          ),
+        ),
+        // Brand
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Text(
+            vehicle.brand,
+            style: const TextStyle(fontSize: 13, color: AppTheme.textDark),
+          ),
+        ),
+        // Model
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Text(
+            vehicle.model,
+            style: const TextStyle(fontSize: 13, color: AppTheme.textDark),
+          ),
+        ),
+        // Status Badge
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: StatusBadge(status: vehicle.status),
+          ),
+        ),
+        // Actions
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                tooltip: 'Edit vehicle ${vehicle.vehicleNumber}',
+                color: AppTheme.textMuted,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.all(4),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                splashRadius: 18,
+                onPressed: () {
+                  Navigator.of(context).pushNamed(
+                    AppRouter.vehicleEditRoute,
+                    arguments: vehicle,
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline, size: 18),
+                tooltip: 'Delete vehicle ${vehicle.vehicleNumber}',
+                color: AppTheme.errorRed,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.all(4),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                splashRadius: 18,
+                onPressed: () => _handleDelete(vehicle),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildMobileCardList(BuildContext context, List<Vehicle> vehicles) {
-    final theme = Theme.of(context);
-
+  Widget _buildMobileCards(List<Vehicle> vehicles) {
     return Column(
       children: vehicles.map((vehicle) {
         return Card(
-          margin: const EdgeInsets.only(bottom: 12),
+          margin: const EdgeInsets.only(bottom: AppTheme.space12),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppTheme.space16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      vehicle.fullName,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                        border: Border.all(color: AppTheme.borderNeutral),
+                      ),
+                      child: Text(
+                        vehicle.vehicleNumber,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textDark,
+                        ),
+                      ),
                     ),
                     StatusBadge(status: vehicle.status, compact: true),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        vehicle.plateNumber,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text('${vehicle.type.displayName} • ${vehicle.formattedMileage}'),
-                  ],
-                ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppTheme.space8),
                 Text(
-                  'Driver: ${vehicle.assignedDriver ?? "Unassigned"}',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                  vehicle.brandModel,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textDark,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${vehicle.company} • ${vehicle.type}',
+                  style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
                 ),
                 const Divider(height: 20),
                 Row(
@@ -591,6 +615,9 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                     OutlinedButton.icon(
                       icon: const Icon(Icons.edit_outlined, size: 16),
                       label: const Text('Edit'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
                       onPressed: () {
                         Navigator.of(context).pushNamed(
                           AppRouter.vehicleEditRoute,
@@ -598,11 +625,12 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                         );
                       },
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppTheme.space8),
                     IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      color: theme.colorScheme.error,
-                      onPressed: () => _confirmDelete(vehicle),
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                      color: AppTheme.errorRed,
+                      tooltip: 'Delete vehicle ${vehicle.vehicleNumber}',
+                      onPressed: () => _handleDelete(vehicle),
                     ),
                   ],
                 ),
@@ -614,47 +642,132 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
-    final theme = Theme.of(context);
+  Widget _buildPaginationControls({
+    required int startIndex,
+    required int endIndex,
+    required int totalMatches,
+    required int totalPages,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            'Showing $startIndex–$endIndex of $totalMatches vehicles',
+            style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              OutlinedButton(
+                onPressed: _currentPage > 1
+                    ? () => setState(() => _currentPage--)
+                    : null,
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: Size.zero,
+                ),
+                child: const Text('Previous'),
+              ),
+              const SizedBox(width: AppTheme.space8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceWhite,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                  border: Border.all(color: AppTheme.borderNeutral),
+                ),
+                child: Text(
+                  'Page $_currentPage of $totalPages',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textDark,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppTheme.space8),
+              OutlinedButton(
+                onPressed: _currentPage < totalPages
+                    ? () => setState(() => _currentPage++)
+                    : null,
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: Size.zero,
+                ),
+                child: const Text('Next'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
+  Widget _buildNoVehiclesRegistered() {
     return Card(
       child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
         child: Column(
           children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.search_off_rounded,
-                size: 48,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No vehicles found',
-              style: theme.textTheme.titleMedium?.copyWith(
+            const Icon(Icons.directions_car_outlined, size: 48, color: AppTheme.textMuted),
+            const SizedBox(height: AppTheme.space16),
+            const Text(
+              'No vehicles registered',
+              style: TextStyle(
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
+                color: AppTheme.textDark,
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'No fleet records match your current search and filter settings.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
-              ),
+            const SizedBox(height: AppTheme.space4),
+            const Text(
+              'The fleet registry is currently empty. Add your first vehicle to get started.',
+              style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: AppTheme.space20),
             ElevatedButton.icon(
+              onPressed: () {
+                Navigator.of(context).pushNamed(AppRouter.vehicleNewRoute);
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Register vehicle'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoMatchingResults() {
+    return Card(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        child: Column(
+          children: [
+            const Icon(Icons.search_off_rounded, size: 48, color: AppTheme.textMuted),
+            const SizedBox(height: AppTheme.space16),
+            const Text(
+              'No matching vehicles found',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textDark,
+              ),
+            ),
+            const SizedBox(height: AppTheme.space4),
+            const Text(
+              'No fleet records match your current search and filter settings.',
+              style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppTheme.space20),
+            OutlinedButton.icon(
               onPressed: _clearFilters,
-              icon: const Icon(Icons.filter_alt_off),
-              label: const Text('Reset All Filters'),
+              icon: const Icon(Icons.close, size: 16),
+              label: const Text('Clear all filters'),
             ),
           ],
         ),

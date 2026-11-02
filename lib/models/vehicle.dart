@@ -1,180 +1,141 @@
 import 'package:flutter/material.dart';
-import '../core/theme/app_theme.dart';
 
-/// Represents the operational status of a vehicle.
+/// Supported vehicle operational statuses.
 enum VehicleStatus {
   active('Active'),
-  maintenance('In Maintenance'),
-  reserved('Reserved'),
-  outOfService('Out of Service');
+  inactive('Inactive'),
+  maintenance('Maintenance');
 
-  final String displayName;
-  const VehicleStatus(this.displayName);
+  final String label;
+  const VehicleStatus(this.label);
 
-  Color get color {
+  /// Status badge text color
+  Color get textColor {
     switch (this) {
       case VehicleStatus.active:
-        return AppTheme.statusActive;
+        return const Color(0xFF15803D); // Green 700
+      case VehicleStatus.inactive:
+        return const Color(0xFF475569); // Slate 600
       case VehicleStatus.maintenance:
-        return AppTheme.statusMaintenance;
-      case VehicleStatus.reserved:
-        return AppTheme.statusReserved;
-      case VehicleStatus.outOfService:
-        return AppTheme.statusOutOfService;
+        return const Color(0xFFB45309); // Amber 700
     }
   }
 
-  IconData get icon {
+  /// Status badge background tint
+  Color get backgroundColor {
     switch (this) {
       case VehicleStatus.active:
-        return Icons.check_circle_outline;
+        return const Color(0xFFDCFCE7); // Green 100
+      case VehicleStatus.inactive:
+        return const Color(0xFFF1F5F9); // Slate 100
       case VehicleStatus.maintenance:
-        return Icons.build_outlined;
-      case VehicleStatus.reserved:
-        return Icons.bookmark_border;
-      case VehicleStatus.outOfService:
-        return Icons.warning_amber_rounded;
+        return const Color(0xFFFEF3C7); // Amber 100
+    }
+  }
+
+  /// Status badge border color
+  Color get borderColor {
+    switch (this) {
+      case VehicleStatus.active:
+        return const Color(0xFF86EFAC); // Green 300
+      case VehicleStatus.inactive:
+        return const Color(0xFFCBD5E1); // Slate 300
+      case VehicleStatus.maintenance:
+        return const Color(0xFFFCD34D); // Amber 300
+    }
+  }
+
+  /// Indicator dot color
+  Color get dotColor {
+    switch (this) {
+      case VehicleStatus.active:
+        return const Color(0xFF16A34A); // Green 600
+      case VehicleStatus.inactive:
+        return const Color(0xFF64748B); // Slate 500
+      case VehicleStatus.maintenance:
+        return const Color(0xFFD97706); // Amber 600
     }
   }
 }
 
-/// Represents the physical body type of a vehicle.
-enum VehicleType {
-  sedan('Sedan', Icons.directions_car_outlined),
-  suv('SUV', Icons.airport_shuttle_outlined),
-  truck('Truck', Icons.local_shipping_outlined),
-  van('Van', Icons.directions_bus_outlined),
-  electric('Electric Vehicle', Icons.electric_car_outlined),
-  hybrid('Hybrid', Icons.eco_outlined);
-
-  final String displayName;
-  final IconData icon;
-  const VehicleType(this.displayName, this.icon);
-}
-
-/// Represents the powertrain/fuel type.
-enum FuelType {
-  gasoline('Gasoline / Petrol'),
-  diesel('Diesel'),
-  electric('Electric'),
-  hybrid('Plug-in Hybrid');
-
-  final String displayName;
-  const FuelType(this.displayName);
-}
-
-/// Vehicle entity model representing a fleet asset.
+/// Core vehicle domain model representing a fleet asset in the Stark Group VMS.
 class Vehicle {
   final String id;
-  final String plateNumber;
-  final String make;
+  final String vehicleNumber;
+  final String company;
+  final String type;
+  final String brand;
   final String model;
-  final int year;
-  final String vin;
-  final VehicleType type;
-  final FuelType fuelType;
   final VehicleStatus status;
-  final int mileage;
-  final String? assignedDriver;
-  final DateTime? lastServiceDate;
 
   const Vehicle({
     required this.id,
-    required this.plateNumber,
-    required this.make,
-    required this.model,
-    required this.year,
-    required this.vin,
+    required this.vehicleNumber,
+    required this.company,
     required this.type,
-    required this.fuelType,
+    required this.brand,
+    required this.model,
     required this.status,
-    required this.mileage,
-    this.assignedDriver,
-    this.lastServiceDate,
   });
 
-  /// Full formatted title (e.g., "2024 Toyota RAV4")
-  String get fullName => '$year $make $model';
-
-  /// Formatted mileage display
-  String get formattedMileage =>
-      '${mileage.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')} km';
+  /// Full brand and model display name (e.g. "Toyota Camry")
+  String get brandModel => '$brand $model';
 
   Vehicle copyWith({
     String? id,
-    String? plateNumber,
-    String? make,
+    String? vehicleNumber,
+    String? company,
+    String? type,
+    String? brand,
     String? model,
-    int? year,
-    String? vin,
-    VehicleType? type,
-    FuelType? fuelType,
     VehicleStatus? status,
-    int? mileage,
-    String? assignedDriver,
-    DateTime? lastServiceDate,
   }) {
     return Vehicle(
       id: id ?? this.id,
-      plateNumber: plateNumber ?? this.plateNumber,
-      make: make ?? this.make,
-      model: model ?? this.model,
-      year: year ?? this.year,
-      vin: vin ?? this.vin,
+      vehicleNumber: vehicleNumber ?? this.vehicleNumber,
+      company: company ?? this.company,
       type: type ?? this.type,
-      fuelType: fuelType ?? this.fuelType,
+      brand: brand ?? this.brand,
+      model: model ?? this.model,
       status: status ?? this.status,
-      mileage: mileage ?? this.mileage,
-      assignedDriver: assignedDriver ?? this.assignedDriver,
-      lastServiceDate: lastServiceDate ?? this.lastServiceDate,
     );
   }
 
-  /// Converts model to Map for future REST API integration.
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'plateNumber': plateNumber,
-      'make': make,
+      'vehicleNumber': vehicleNumber,
+      'company': company,
+      'type': type,
+      'brand': brand,
       'model': model,
-      'year': year,
-      'vin': vin,
-      'type': type.name,
-      'fuelType': fuelType.name,
       'status': status.name,
-      'mileage': mileage,
-      'assignedDriver': assignedDriver,
-      'lastServiceDate': lastServiceDate?.toIso8601String(),
     };
   }
 
-  /// Factory constructor to parse JSON/Map from future REST API integration.
   factory Vehicle.fromMap(Map<String, dynamic> map) {
     return Vehicle(
       id: map['id'] as String,
-      plateNumber: map['plateNumber'] as String,
-      make: map['make'] as String,
+      vehicleNumber: map['vehicleNumber'] as String,
+      company: map['company'] as String,
+      type: map['type'] as String,
+      brand: map['brand'] as String,
       model: map['model'] as String,
-      year: (map['year'] as num).toInt(),
-      vin: map['vin'] as String,
-      type: VehicleType.values.firstWhere(
-        (e) => e.name == map['type'],
-        orElse: () => VehicleType.sedan,
-      ),
-      fuelType: FuelType.values.firstWhere(
-        (e) => e.name == map['fuelType'],
-        orElse: () => FuelType.gasoline,
-      ),
       status: VehicleStatus.values.firstWhere(
-        (e) => e.name == map['status'],
+        (s) => s.name.toUpperCase() == (map['status'] as String).toUpperCase(),
         orElse: () => VehicleStatus.active,
       ),
-      mileage: (map['mileage'] as num).toInt(),
-      assignedDriver: map['assignedDriver'] as String?,
-      lastServiceDate: map['lastServiceDate'] != null
-          ? DateTime.tryParse(map['lastServiceDate'] as String)
-          : null,
     );
   }
-}
 
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Vehicle &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          vehicleNumber == other.vehicleNumber;
+
+  @override
+  int get hashCode => id.hashCode ^ vehicleNumber.hashCode;
+}
