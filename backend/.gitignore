@@ -8,6 +8,11 @@ build/
 !.env.example
 *.local
 
+# Developer-local Spring Boot configuration may contain database credentials.
+application-local.properties
+application-local.yml
+application-local.yaml
+
 # IDE files
 .idea/
 *.iml
