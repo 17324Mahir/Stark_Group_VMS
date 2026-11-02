@@ -389,7 +389,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildDemoNotice() {
     return const Center(
       child: Text(
-        'Demonstration mode · Local mock data only\nChanges reset on browser refresh',
+        'Demonstration access · Real database-backed vehicle data\nConnected to PostgreSQL via Spring Boot REST API',
         textAlign: TextAlign.center,
         style: TextStyle(
           fontSize: 11,

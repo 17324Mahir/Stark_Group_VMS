@@ -83,25 +83,26 @@ class AppShell extends StatelessWidget {
 
   Widget _buildDemoChip() {
     return Tooltip(
-      message: 'Running in demo mode with in-memory mock data. Changes reset on browser refresh.',
+      message:
+          'Connected to live PostgreSQL database via Spring Boot REST API. Demo login is active.',
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: const Color(0xFFF1F5F9), // Slate 100
+          color: const Color(0xFFF0FDF4), // Green 50
           borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-          border: Border.all(color: AppTheme.borderNeutral),
+          border: Border.all(color: const Color(0xFFBBF7D0)), // Green 200
         ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.science_outlined, size: 12, color: AppTheme.textMuted),
+            Icon(Icons.dns_outlined, size: 12, color: Color(0xFF15803D)),
             SizedBox(width: 4),
             Text(
-              'Demo · Mock data',
+              'Database Connected',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: AppTheme.textMuted,
+                color: Color(0xFF15803D),
               ),
             ),
           ],

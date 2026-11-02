@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
+import '../core/errors/api_exception.dart';
 import '../models/vehicle.dart';
+import 'api/vehicle_api_client.dart';
 import 'mock_data.dart';
 
 /// Field options for sorting the vehicle list.
@@ -8,43 +10,160 @@ enum VehicleSortField {
   company,
 }
 
-/// Shared in-memory source of truth for the Stark Group Vehicle Management System.
+/// Centralized state manager and repository for Stark Group VMS fleet data.
 ///
-/// Changes persist in memory for the active browser session and reset on refresh.
+/// Communicates with the Spring Boot backend REST API while providing a
+/// single reactive source of truth for the Flutter presentation layer.
 class VehicleRepository extends ChangeNotifier {
-  static final VehicleRepository instance = VehicleRepository._internal();
+  static VehicleRepository instance = VehicleRepository();
 
-  VehicleRepository._internal() {
-    _vehicles.addAll(initialMockVehicles);
+  /// Injectable instance for unit and widget testing.
+  static void setInstanceForTesting(VehicleRepository testRepo) {
+    instance = testRepo;
+  }
+
+  final VehicleApiClient? _apiClient;
+  final bool _isFake;
+
+  VehicleRepository({VehicleApiClient? apiClient})
+      : _apiClient = apiClient ?? VehicleApiClient(),
+        _isFake = false;
+
+  /// Test-only constructor simulating the backend in-memory without network calls.
+  VehicleRepository.fake({List<Vehicle>? initialVehicles})
+      : _apiClient = null,
+        _isFake = true {
+    if (initialVehicles != null) {
+      _vehicles.addAll(initialVehicles);
+    }
   }
 
   final List<Vehicle> _vehicles = [];
+  bool _isLoading = false;
+  String? _errorMessage;
+  int _fetchCounter = 0;
 
-  /// Unmodifiable view of all vehicle records.
+  /// Unmodifiable view of all vehicle records loaded into memory.
   List<Vehicle> get allVehicles => List.unmodifiable(_vehicles);
 
-  /// Total count of all vehicles registered in the fleet.
+  /// Total count of all loaded vehicles.
   int get totalCount => _vehicles.length;
 
-  /// Resets in-memory fleet to initial mock seed records.
-  void reset() {
+  /// Whether a fetch operation is currently in flight.
+  bool get isLoading => _isLoading;
+
+  /// Current network or server error message, if any.
+  String? get errorMessage => _errorMessage;
+
+  bool get hasError => _errorMessage != null;
+
+  /// Resets test seed data (used by widget tests).
+  void reset([List<Vehicle>? seed]) {
     _vehicles.clear();
-    _vehicles.addAll(initialMockVehicles);
+    _vehicles.addAll(seed ?? initialMockVehicles);
+    _isLoading = false;
+    _errorMessage = null;
     notifyListeners();
   }
 
-  /// Check whether a vehicle number already exists (case-insensitive).
-  /// [excludeId] allows excluding the record currently being edited.
-  bool isVehicleNumberDuplicate(String vehicleNumber, {String? excludeId}) {
-    final normalized = vehicleNumber.trim().toLowerCase();
-    return _vehicles.any((v) {
-      if (excludeId != null && v.id == excludeId) return false;
-      return v.vehicleNumber.trim().toLowerCase() == normalized;
-    });
+  /// Fetches vehicles from `GET /api/vehicles`.
+  ///
+  /// [silent] keeps the current list displayed without showing a full-page spinner.
+  Future<void> fetchVehicles({bool silent = false}) async {
+    if (_isFake) return;
+
+    final fetchId = ++_fetchCounter;
+    if (!silent) {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+    }
+
+    try {
+      final serverVehicles = await _apiClient!.getVehicles();
+      if (fetchId != _fetchCounter) return;
+
+      _vehicles.clear();
+      _vehicles.addAll(serverVehicles);
+      _errorMessage = null;
+    } catch (e) {
+      if (fetchId != _fetchCounter) return;
+      _errorMessage = e is ApiException
+          ? e.message
+          : (e is NetworkException ? e.message : e.toString());
+      rethrow;
+    } finally {
+      if (fetchId == _fetchCounter) {
+        _isLoading = false;
+        notifyListeners();
+      }
+    }
   }
 
-  /// Retrieve a vehicle by its unique stable ID.
-  Vehicle? getById(String id) {
+  /// Registers a new vehicle with the backend and updates local state.
+  Future<Vehicle> add(Vehicle vehicle) async {
+    if (_isFake) {
+      _vehicles.insert(0, vehicle);
+      notifyListeners();
+      return vehicle;
+    }
+
+    final created =
+        await _apiClient!.createVehicle(vehicle.toCreateUpdateJson());
+    _vehicles.insert(0, created);
+    notifyListeners();
+    return created;
+  }
+
+  /// Updates an existing vehicle with the backend and updates local state.
+  Future<Vehicle> update(Vehicle vehicle) async {
+    if (_isFake) {
+      final index = _vehicles.indexWhere((v) => v.id == vehicle.id);
+      if (index != -1) {
+        _vehicles[index] = vehicle;
+        notifyListeners();
+      }
+      return vehicle;
+    }
+
+    final updated = await _apiClient!.updateVehicle(
+      vehicle.id,
+      vehicle.toCreateUpdateJson(),
+    );
+    final index = _vehicles.indexWhere((v) => v.id == updated.id);
+    if (index != -1) {
+      _vehicles[index] = updated;
+    } else {
+      _vehicles.insert(0, updated);
+    }
+    notifyListeners();
+    return updated;
+  }
+
+  /// Deletes a vehicle by its unique ID.
+  Future<void> delete(int id) async {
+    if (_isFake) {
+      _vehicles.removeWhere((v) => v.id == id);
+      notifyListeners();
+      return;
+    }
+
+    try {
+      await _apiClient!.deleteVehicle(id);
+      _vehicles.removeWhere((v) => v.id == id);
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.isNotFound) {
+        // Vehicle already removed remotely; reconcile local list
+        _vehicles.removeWhere((v) => v.id == id);
+        notifyListeners();
+      }
+      rethrow;
+    }
+  }
+
+  /// Retrieve a vehicle from local memory by its unique stable ID.
+  Vehicle? getById(int id) {
     try {
       return _vehicles.firstWhere((v) => v.id == id);
     } catch (_) {
@@ -52,28 +171,16 @@ class VehicleRepository extends ChangeNotifier {
     }
   }
 
-  /// Register a new vehicle.
-  void add(Vehicle vehicle) {
-    _vehicles.insert(0, vehicle);
-    notifyListeners();
+  /// Check whether a vehicle number already exists (case-insensitive client advisory).
+  bool isVehicleNumberDuplicate(String vehicleNumber, {int? excludeId}) {
+    final normalized = vehicleNumber.trim().toUpperCase();
+    return _vehicles.any((v) {
+      if (excludeId != null && v.id == excludeId) return false;
+      return v.vehicleNumber.trim().toUpperCase() == normalized;
+    });
   }
 
-  /// Update an existing vehicle record while preserving its stable ID.
-  void update(Vehicle vehicle) {
-    final index = _vehicles.indexWhere((v) => v.id == vehicle.id);
-    if (index != -1) {
-      _vehicles[index] = vehicle;
-      notifyListeners();
-    }
-  }
-
-  /// Delete a vehicle by its unique ID.
-  void delete(String id) {
-    _vehicles.removeWhere((v) => v.id == id);
-    notifyListeners();
-  }
-
-  /// Filter, search, and sort vehicles against the shared in-memory dataset.
+  /// Filter, search, and sort vehicles against the loaded dataset.
   List<Vehicle> query({
     String? searchQuery,
     VehicleStatus? statusFilter,

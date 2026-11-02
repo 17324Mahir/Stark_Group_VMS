@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/errors/api_exception.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/mock_data.dart';
@@ -54,8 +55,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
     final v = widget.vehicleToEdit;
 
     _initialNumber = v?.vehicleNumber ?? '';
-    _initialCompany = v?.company ?? mockCompanies.first;
-    _initialType = v?.type ?? mockVehicleTypes.first;
+    _initialCompany = v?.company ?? kDefaultCompanies.first;
+    _initialType = v?.type ?? kDefaultVehicleTypes.first;
     _initialBrand = v?.brand ?? '';
     _initialModel = v?.model ?? '';
     _initialStatus = v?.status ?? VehicleStatus.active;
@@ -105,10 +106,13 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
       _duplicateNumberError = null;
     });
 
-    final trimmedNumber = _numberController.text.trim();
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
 
-    // Check duplicate vehicle number
+    final trimmedNumber = _numberController.text.trim();
     final repo = VehicleRepository.instance;
+
     final isDuplicate = repo.isVehicleNumberDuplicate(
       trimmedNumber,
       excludeId: widget.vehicleToEdit?.id,
@@ -116,48 +120,87 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
 
     if (isDuplicate) {
       setState(() {
-        _duplicateNumberError = 'Vehicle Number "$trimmedNumber" is already registered. Vehicle numbers must be unique.';
+        _duplicateNumberError =
+            'Vehicle Number "$trimmedNumber" is already registered. Vehicle numbers must be unique.';
       });
       _numberFocusNode.requestFocus();
-      return;
-    }
-
-    if (!_formKey.currentState!.validate()) {
       return;
     }
 
     setState(() => _isSaving = true);
 
     final vehicle = Vehicle(
-      id: widget.vehicleToEdit?.id ?? 'veh-${DateTime.now().millisecondsSinceEpoch % 100000}',
+      id: widget.vehicleToEdit?.id ?? 0,
       vehicleNumber: trimmedNumber,
-      company: _selectedCompany ?? mockCompanies.first,
-      type: _selectedType ?? mockVehicleTypes.first,
+      company: _selectedCompany ?? kDefaultCompanies.first,
+      type: _selectedType ?? kDefaultVehicleTypes.first,
       brand: _brandController.text.trim(),
       model: _modelController.text.trim(),
       status: _selectedStatus,
     );
 
-    if (widget.isEditing) {
-      repo.update(vehicle);
-    } else {
-      repo.add(vehicle);
-    }
+    try {
+      final Vehicle result;
+      if (widget.isEditing) {
+        result = await repo.update(vehicle);
+      } else {
+        result = await repo.add(vehicle);
+      }
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          widget.isEditing
-              ? 'Vehicle ${vehicle.vehicleNumber} successfully updated.'
-              : 'Vehicle ${vehicle.vehicleNumber} successfully registered.',
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isEditing
+                ? 'Vehicle ${result.vehicleNumber} successfully updated.'
+                : 'Vehicle ${result.vehicleNumber} successfully registered.',
+          ),
+          behavior: SnackBarBehavior.floating,
         ),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+      );
 
-    Navigator.of(context).pop();
+      Navigator.of(context).pop();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+        if (e.isDuplicateVehicleNumber) {
+          _duplicateNumberError = e.message;
+          _numberFocusNode.requestFocus();
+        }
+      });
+
+      if (!e.isDuplicateVehicleNumber) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: AppTheme.errorRed,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message),
+          backgroundColor: AppTheme.errorRed,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to save vehicle: $e'),
+          backgroundColor: AppTheme.errorRed,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override
@@ -212,41 +255,18 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            InkWell(
-              onTap: _handleCancel,
-              child: const Text(
-                'Vehicles',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppTheme.primaryBlue,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            const Text('/', style: TextStyle(color: AppTheme.textMuted, fontSize: 13)),
-            const SizedBox(width: 6),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
-            ),
-          ],
-        ),
-        const SizedBox(height: AppTheme.space8),
         Text(
           title,
           style: const TextStyle(
-            fontSize: 22,
+            fontSize: 20,
             fontWeight: FontWeight.bold,
             color: AppTheme.textDark,
           ),
         ),
-        const SizedBox(height: AppTheme.space4),
+        const SizedBox(height: 2),
         Text(
           widget.isEditing
-              ? 'Update specifications and status for vehicle ${widget.vehicleToEdit!.vehicleNumber}.'
+              ? 'Update existing fleet asset parameters and operational state.'
               : 'Add a new vehicle record to the Stark Group fleet registry.',
           style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
         ),
@@ -261,7 +281,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle('1. Vehicle Identity', 'Registration number and owning subsidiary'),
+            _buildSectionTitle(
+                '1. Vehicle Identity', 'Registration number and owning subsidiary'),
             const SizedBox(height: AppTheme.space16),
             if (isDesktop)
               Row(
@@ -290,7 +311,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle('2. Vehicle Details', 'Category, manufacturer brand, and model designation'),
+            _buildSectionTitle('2. Vehicle Details',
+                'Category, manufacturer brand, and model designation'),
             const SizedBox(height: AppTheme.space16),
             if (isDesktop)
               Row(
@@ -323,7 +345,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle('3. Operational State', 'Current deployment status within the fleet'),
+            _buildSectionTitle(
+                '3. Operational State', 'Current deployment status within the fleet'),
             const SizedBox(height: AppTheme.space16),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 360),
@@ -362,7 +385,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
       children: [
         const Text(
           'Vehicle Number *',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         TextFormField(
@@ -377,6 +401,9 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
             if (trimmed.isEmpty) {
               return 'Vehicle Number is required.';
             }
+            if (trimmed.length > 64) {
+              return 'Vehicle Number cannot exceed 64 characters.';
+            }
             return null;
           },
           onChanged: (_) {
@@ -390,19 +417,27 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
   }
 
   Widget _buildCompanyField() {
+    final availableCompanies = {
+      ...kDefaultCompanies,
+      if (_selectedCompany != null && _selectedCompany!.isNotEmpty)
+        _selectedCompany!,
+      for (final v in VehicleRepository.instance.allVehicles) v.company,
+    }.toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
           'Company *',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         DropdownButtonFormField<String>(
           initialValue: _selectedCompany,
           isExpanded: true,
           decoration: const InputDecoration(),
-          items: mockCompanies.map((c) {
+          items: availableCompanies.map((c) {
             return DropdownMenuItem(
               value: c,
               child: Text(c, style: const TextStyle(fontSize: 14)),
@@ -423,19 +458,26 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
   }
 
   Widget _buildTypeField() {
+    final availableTypes = {
+      ...kDefaultVehicleTypes,
+      if (_selectedType != null && _selectedType!.isNotEmpty) _selectedType!,
+      for (final v in VehicleRepository.instance.allVehicles) v.type,
+    }.toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
           'Type *',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         DropdownButtonFormField<String>(
           initialValue: _selectedType,
           isExpanded: true,
           decoration: const InputDecoration(),
-          items: mockVehicleTypes.map((t) {
+          items: availableTypes.map((t) {
             return DropdownMenuItem(
               value: t,
               child: Text(t, style: const TextStyle(fontSize: 14)),
@@ -461,19 +503,21 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
       children: [
         const Text(
           'Brand *',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         TextFormField(
           controller: _brandController,
           focusNode: _brandFocusNode,
-          decoration: const InputDecoration(
-            hintText: 'e.g. Toyota, Ford, Volvo',
-          ),
+          decoration: const InputDecoration(hintText: 'e.g. Mercedes-Benz, Volvo'),
           validator: (value) {
             final trimmed = value?.trim() ?? '';
             if (trimmed.isEmpty) {
               return 'Brand is required.';
+            }
+            if (trimmed.length > 80) {
+              return 'Brand cannot exceed 80 characters.';
             }
             return null;
           },
@@ -488,19 +532,21 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
       children: [
         const Text(
           'Model *',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         TextFormField(
           controller: _modelController,
           focusNode: _modelFocusNode,
-          decoration: const InputDecoration(
-            hintText: 'e.g. Camry, F-150',
-          ),
+          decoration: const InputDecoration(hintText: 'e.g. Sprinter 2500, Model 3'),
           validator: (value) {
             final trimmed = value?.trim() ?? '';
             if (trimmed.isEmpty) {
               return 'Model is required.';
+            }
+            if (trimmed.length > 120) {
+              return 'Model cannot exceed 120 characters.';
             }
             return null;
           },
@@ -515,7 +561,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
       children: [
         const Text(
           'Status *',
-          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+          style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         DropdownButtonFormField<VehicleStatus>(
@@ -530,7 +577,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
                   Container(
                     width: 7,
                     height: 7,
-                    decoration: BoxDecoration(color: s.dotColor, shape: BoxShape.circle),
+                    decoration:
+                        BoxDecoration(color: s.dotColor, shape: BoxShape.circle),
                   ),
                   const SizedBox(width: 8),
                   Text(s.label, style: const TextStyle(fontSize: 14)),
@@ -551,7 +599,7 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         OutlinedButton(
-          onPressed: _handleCancel,
+          onPressed: _isSaving ? null : _handleCancel,
           child: const Text('Cancel'),
         ),
         const SizedBox(width: AppTheme.space12),
@@ -561,7 +609,10 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : Text(widget.isEditing ? 'Save changes' : 'Register vehicle'),
         ),

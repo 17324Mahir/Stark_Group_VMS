@@ -1,7 +1,7 @@
 import '../models/vehicle.dart';
 
-/// Available mock companies within the Stark Group conglomerate.
-const List<String> mockCompanies = [
+/// Predefined default companies within the Stark Group conglomerate.
+const List<String> kDefaultCompanies = [
   'Stark Logistics',
   'Stark Industries',
   'Stark Security',
@@ -9,8 +9,8 @@ const List<String> mockCompanies = [
   'Stark Aerospace',
 ];
 
-/// Available mock vehicle types.
-const List<String> mockVehicleTypes = [
+/// Predefined default vehicle types.
+const List<String> kDefaultVehicleTypes = [
   'Sedan',
   'SUV',
   'Truck',
@@ -18,11 +18,14 @@ const List<String> mockVehicleTypes = [
   'Electric',
 ];
 
-/// 18 realistic fictional initial vehicle records covering multiple companies,
-/// vehicle types, brands, models, and all three operational statuses.
+// Backward-compatible aliases
+const List<String> mockCompanies = kDefaultCompanies;
+const List<String> mockVehicleTypes = kDefaultVehicleTypes;
+
+/// Realistic fictional seed vehicle records used strictly for isolated unit/widget tests.
 final List<Vehicle> initialMockVehicles = [
   const Vehicle(
-    id: 'veh-001',
+    id: 1,
     vehicleNumber: 'STK-1001',
     company: 'Stark Logistics',
     type: 'Van',
@@ -31,7 +34,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-002',
+    id: 2,
     vehicleNumber: 'STK-1002',
     company: 'Stark Logistics',
     type: 'Truck',
@@ -40,7 +43,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-003',
+    id: 3,
     vehicleNumber: 'STK-1003',
     company: 'Stark Security',
     type: 'SUV',
@@ -49,7 +52,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-004',
+    id: 4,
     vehicleNumber: 'STK-1004',
     company: 'Stark Industries',
     type: 'Sedan',
@@ -58,7 +61,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-005',
+    id: 5,
     vehicleNumber: 'STK-1005',
     company: 'Stark Energy',
     type: 'Electric',
@@ -67,7 +70,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-006',
+    id: 6,
     vehicleNumber: 'STK-1006',
     company: 'Stark Logistics',
     type: 'Van',
@@ -76,7 +79,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.maintenance,
   ),
   const Vehicle(
-    id: 'veh-007',
+    id: 7,
     vehicleNumber: 'STK-1007',
     company: 'Stark Security',
     type: 'SUV',
@@ -85,7 +88,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-008',
+    id: 8,
     vehicleNumber: 'STK-1008',
     company: 'Stark Industries',
     type: 'Sedan',
@@ -94,7 +97,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.inactive,
   ),
   const Vehicle(
-    id: 'veh-009',
+    id: 9,
     vehicleNumber: 'STK-1009',
     company: 'Stark Energy',
     type: 'Truck',
@@ -103,7 +106,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-010',
+    id: 10,
     vehicleNumber: 'STK-1010',
     company: 'Stark Aerospace',
     type: 'Van',
@@ -112,7 +115,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-011',
+    id: 11,
     vehicleNumber: 'STK-1011',
     company: 'Stark Logistics',
     type: 'Truck',
@@ -121,7 +124,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.maintenance,
   ),
   const Vehicle(
-    id: 'veh-012',
+    id: 12,
     vehicleNumber: 'STK-1012',
     company: 'Stark Security',
     type: 'Sedan',
@@ -130,7 +133,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-013',
+    id: 13,
     vehicleNumber: 'STK-1013',
     company: 'Stark Industries',
     type: 'Electric',
@@ -139,7 +142,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-014',
+    id: 14,
     vehicleNumber: 'STK-1014',
     company: 'Stark Aerospace',
     type: 'Truck',
@@ -148,7 +151,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.inactive,
   ),
   const Vehicle(
-    id: 'veh-015',
+    id: 15,
     vehicleNumber: 'STK-1015',
     company: 'Stark Energy',
     type: 'SUV',
@@ -157,7 +160,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.maintenance,
   ),
   const Vehicle(
-    id: 'veh-016',
+    id: 16,
     vehicleNumber: 'STK-1016',
     company: 'Stark Logistics',
     type: 'Van',
@@ -166,7 +169,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.inactive,
   ),
   const Vehicle(
-    id: 'veh-017',
+    id: 17,
     vehicleNumber: 'STK-1017',
     company: 'Stark Industries',
     type: 'Electric',
@@ -175,7 +178,7 @@ final List<Vehicle> initialMockVehicles = [
     status: VehicleStatus.active,
   ),
   const Vehicle(
-    id: 'veh-018',
+    id: 18,
     vehicleNumber: 'STK-1018',
     company: 'Stark Aerospace',
     type: 'Sedan',

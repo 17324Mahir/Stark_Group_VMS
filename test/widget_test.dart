@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stark_vms/data/mock_data.dart';
 import 'package:stark_vms/data/vehicle_repository.dart';
 import 'package:stark_vms/main.dart';
 
 void main() {
   setUp(() {
-    VehicleRepository.instance.reset();
+    VehicleRepository.setInstanceForTesting(
+      VehicleRepository.fake(initialVehicles: initialMockVehicles),
+    );
   });
 
   testWidgets('1. Login screen renders with Stark Group branding and demo credentials',

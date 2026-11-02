@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../../core/errors/api_exception.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/mock_data.dart';
@@ -32,9 +33,26 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
   static const int _pageSize = 10;
 
   @override
+  void initState() {
+    super.initState();
+    // Fetch live vehicles from the backend API on initial mount
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadVehicles();
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadVehicles({bool silent = false}) async {
+    try {
+      await VehicleRepository.instance.fetchVehicles(silent: silent);
+    } catch (_) {
+      // Error is captured in VehicleRepository.errorMessage
+    }
   }
 
   bool get _hasActiveFilters =>
@@ -71,13 +89,31 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
 
     if (confirmed && mounted) {
-      VehicleRepository.instance.delete(vehicle.id);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Vehicle ${vehicle.vehicleNumber} was removed from the fleet.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      try {
+        await VehicleRepository.instance.delete(vehicle.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Vehicle ${vehicle.vehicleNumber} was removed from the fleet.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        final errorMsg = e is ApiException
+            ? e.message
+            : (e is NetworkException
+                ? e.message
+                : 'Failed to delete vehicle: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            backgroundColor: AppTheme.errorRed,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 
@@ -125,11 +161,19 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildHeader(repo.totalCount),
+                _buildHeader(repo.totalCount, repo.isLoading),
+                if (repo.hasError && repo.totalCount > 0) ...[
+                  const SizedBox(height: AppTheme.space12),
+                  _buildRefreshErrorBanner(repo.errorMessage!),
+                ],
                 const SizedBox(height: AppTheme.space20),
-                _buildToolbar(),
+                _buildToolbar(repo.allVehicles),
                 const SizedBox(height: AppTheme.space16),
-                if (repo.totalCount == 0)
+                if (repo.isLoading && repo.totalCount == 0)
+                  _buildLoadingState()
+                else if (repo.hasError && repo.totalCount == 0)
+                  _buildErrorState(repo.errorMessage!)
+                else if (repo.totalCount == 0)
                   _buildNoVehiclesRegistered()
                 else if (totalMatches == 0)
                   _buildNoMatchingResults()
@@ -154,7 +198,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildHeader(int totalCount) {
+  Widget _buildHeader(int totalCount, bool isLoading) {
     return Wrap(
       alignment: WrapAlignment.spaceBetween,
       crossAxisAlignment: WrapCrossAlignment.end,
@@ -182,27 +226,76 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: AppTheme.borderSubtle,
-            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-            border: Border.all(color: AppTheme.borderNeutral),
-          ),
-          child: Text(
-            'Total: $totalCount vehicles',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: AppTheme.textMuted,
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTheme.borderSubtle,
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                border: Border.all(color: AppTheme.borderNeutral),
+              ),
+              child: Text(
+                'Total: $totalCount vehicles',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textMuted,
+                ),
+              ),
             ),
-          ),
+            const SizedBox(width: AppTheme.space8),
+            IconButton(
+              icon: isLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 18),
+              tooltip: 'Refresh fleet from database',
+              onPressed: isLoading ? null : () => _loadVehicles(silent: true),
+            ),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildToolbar() {
+  Widget _buildRefreshErrorBanner(String message) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2), // Red 50
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: const Color(0xFFFECACA)), // Red 200
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded,
+              size: 18, color: AppTheme.errorRed),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Could not refresh fleet data: $message',
+              style: const TextStyle(fontSize: 12, color: AppTheme.errorRed),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _loadVehicles(silent: true),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+            ),
+            child: const Text('Retry', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolbar(List<Vehicle> allVehicles) {
     final isDesktop = MediaQuery.sizeOf(context).width >= 900;
 
     return Card(
@@ -218,7 +311,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                   const SizedBox(width: AppTheme.space16),
                   Expanded(
                     flex: 2,
-                    child: _buildCompanyDropdown(),
+                    child: _buildCompanyDropdown(allVehicles),
                   ),
                   const SizedBox(width: AppTheme.space16),
                   Expanded(
@@ -242,7 +335,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                   const SizedBox(height: AppTheme.space12),
                   Row(
                     children: [
-                      Expanded(child: _buildCompanyDropdown()),
+                      Expanded(child: _buildCompanyDropdown(allVehicles)),
                       const SizedBox(width: AppTheme.space12),
                       Expanded(child: _buildStatusDropdown()),
                     ],
@@ -269,7 +362,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
       controller: _searchController,
       decoration: InputDecoration(
         hintText: 'Search by vehicle number, company, brand, or model...',
-        prefixIcon: const Icon(Icons.search, size: 18, color: AppTheme.textMuted),
+        prefixIcon:
+            const Icon(Icons.search, size: 18, color: AppTheme.textMuted),
         suffixIcon: _searchController.text.isNotEmpty
             ? IconButton(
                 icon: const Icon(Icons.clear, size: 16),
@@ -285,26 +379,30 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
-  Widget _buildCompanyDropdown() {
+  Widget _buildCompanyDropdown(List<Vehicle> allVehicles) {
+    final companies = {
+      'All Companies',
+      ...kDefaultCompanies,
+      for (final v in allVehicles) v.company,
+    }.toList();
+
+    final currentValue = companies.contains(_companyFilter)
+        ? _companyFilter
+        : 'All Companies';
+
     return DropdownButtonFormField<String>(
-      key: ValueKey(_companyFilter),
-      initialValue: _companyFilter,
+      key: ValueKey(currentValue),
+      initialValue: currentValue,
       isExpanded: true,
       decoration: const InputDecoration(
         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       ),
-      items: [
-        const DropdownMenuItem(
-          value: 'All Companies',
-          child: Text('All Companies', style: TextStyle(fontSize: 13)),
+      items: companies.map(
+        (c) => DropdownMenuItem(
+          value: c,
+          child: Text(c, style: const TextStyle(fontSize: 13)),
         ),
-        ...mockCompanies.map(
-          (c) => DropdownMenuItem(
-            value: c,
-            child: Text(c, style: const TextStyle(fontSize: 13)),
-          ),
-        ),
-      ],
+      ).toList(),
       onChanged: (val) {
         setState(() {
           _companyFilter = val;
@@ -335,7 +433,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                 Container(
                   width: 6,
                   height: 6,
-                  decoration: BoxDecoration(color: s.dotColor, shape: BoxShape.circle),
+                  decoration:
+                      BoxDecoration(color: s.dotColor, shape: BoxShape.circle),
                 ),
                 const SizedBox(width: 6),
                 Text(s.label, style: const TextStyle(fontSize: 13)),
@@ -353,6 +452,68 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
   }
 
+  Widget _buildLoadingState() {
+    return Card(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        child: const Column(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: AppTheme.space16),
+            Text(
+              'Loading fleet registry...',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textDark,
+              ),
+            ),
+            SizedBox(height: AppTheme.space4),
+            Text(
+              'Connecting to Spring Boot backend database.',
+              style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String errorMsg) {
+    return Card(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        child: Column(
+          children: [
+            const Icon(Icons.cloud_off_rounded,
+                size: 48, color: AppTheme.errorRed),
+            const SizedBox(height: AppTheme.space16),
+            const Text(
+              'Unable to load fleet data',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textDark,
+              ),
+            ),
+            const SizedBox(height: AppTheme.space8),
+            Text(
+              errorMsg,
+              style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppTheme.space20),
+            ElevatedButton.icon(
+              onPressed: () => _loadVehicles(),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Retry connection'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDesktopTable(List<Vehicle> vehicles) {
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -363,10 +524,10 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
           child: Table(
             columnWidths: const {
               0: FixedColumnWidth(140), // Vehicle Number
-              1: FlexColumnWidth(2.0),  // Company
-              2: FixedColumnWidth(90),  // Type
-              3: FlexColumnWidth(1.4),  // Brand
-              4: FlexColumnWidth(1.6),  // Model
+              1: FlexColumnWidth(2.0), // Company
+              2: FixedColumnWidth(90), // Type
+              3: FlexColumnWidth(1.4), // Brand
+              4: FlexColumnWidth(1.6), // Model
               5: FixedColumnWidth(130), // Status
               6: FixedColumnWidth(110), // Actions
             },
@@ -385,10 +546,12 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     return TableRow(
       decoration: const BoxDecoration(
         color: Color(0xFFF8FAFC),
-        border: Border(bottom: BorderSide(color: AppTheme.borderNeutral, width: 1)),
+        border:
+            Border(bottom: BorderSide(color: AppTheme.borderNeutral, width: 1)),
       ),
       children: [
-        _buildSortableHeaderCell('VEHICLE NUMBER', VehicleSortField.vehicleNumber),
+        _buildSortableHeaderCell(
+            'VEHICLE NUMBER', VehicleSortField.vehicleNumber),
         _buildSortableHeaderCell('COMPANY', VehicleSortField.company),
         _buildStaticHeaderCell('TYPE'),
         _buildStaticHeaderCell('BRAND'),
@@ -424,7 +587,9 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             const SizedBox(width: 4),
             Icon(
               isSorted
-                  ? (_sortAscending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded)
+                  ? (_sortAscending
+                      ? Icons.arrow_upward_rounded
+                      : Icons.arrow_downward_rounded)
                   : Icons.unfold_more_rounded,
               size: 14,
               color: isSorted ? AppTheme.primaryBlue : AppTheme.textDisabled,
@@ -455,7 +620,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     return TableRow(
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(bottom: BorderSide(color: AppTheme.borderSubtle, width: 1)),
+        border:
+            Border(bottom: BorderSide(color: AppTheme.borderSubtle, width: 1)),
       ),
       children: [
         // Vehicle Number
@@ -575,7 +741,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF1F5F9),
                         borderRadius: BorderRadius.circular(AppTheme.radiusSm),
@@ -605,32 +772,30 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${vehicle.company} • ${vehicle.type}',
-                  style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
+                  '${vehicle.company} · ${vehicle.type}',
+                  style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
                 ),
-                const Divider(height: 20),
+                const SizedBox(height: AppTheme.space12),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.edit_outlined, size: 16),
-                      label: const Text('Edit'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      ),
+                    TextButton.icon(
                       onPressed: () {
                         Navigator.of(context).pushNamed(
                           AppRouter.vehicleEditRoute,
                           arguments: vehicle,
                         );
                       },
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: const Text('Edit'),
                     ),
                     const SizedBox(width: AppTheme.space8),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 20),
-                      color: AppTheme.errorRed,
-                      tooltip: 'Delete vehicle ${vehicle.vehicleNumber}',
+                    TextButton.icon(
                       onPressed: () => _handleDelete(vehicle),
+                      icon: const Icon(Icons.delete_outline,
+                          size: 16, color: AppTheme.errorRed),
+                      label: const Text('Delete',
+                          style: TextStyle(color: AppTheme.errorRed)),
                     ),
                   ],
                 ),
@@ -648,59 +813,63 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     required int totalMatches,
     required int totalPages,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppTheme.space8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Showing $startIndex–$endIndex of $totalMatches vehicles',
-            style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              OutlinedButton(
-                onPressed: _currentPage > 1
-                    ? () => setState(() => _currentPage--)
-                    : null,
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  minimumSize: Size.zero,
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Showing $startIndex–$endIndex of $totalMatches vehicles',
+              style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
+            ),
+            Row(
+              children: [
+                OutlinedButton(
+                  onPressed: _currentPage > 1
+                      ? () => setState(() => _currentPage--)
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: Size.zero,
+                  ),
+                  child: const Text('Previous'),
                 ),
-                child: const Text('Previous'),
-              ),
-              const SizedBox(width: AppTheme.space8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceWhite,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-                  border: Border.all(color: AppTheme.borderNeutral),
-                ),
-                child: Text(
-                  'Page $_currentPage of $totalPages',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.textDark,
+                const SizedBox(width: AppTheme.space8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceWhite,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                    border: Border.all(color: AppTheme.borderNeutral),
+                  ),
+                  child: Text(
+                    'Page $_currentPage of $totalPages',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textDark,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: AppTheme.space8),
-              OutlinedButton(
-                onPressed: _currentPage < totalPages
-                    ? () => setState(() => _currentPage++)
-                    : null,
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  minimumSize: Size.zero,
+                const SizedBox(width: AppTheme.space8),
+                OutlinedButton(
+                  onPressed: _currentPage < totalPages
+                      ? () => setState(() => _currentPage++)
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: Size.zero,
+                  ),
+                  child: const Text('Next'),
                 ),
-                child: const Text('Next'),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -711,7 +880,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
         padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
         child: Column(
           children: [
-            const Icon(Icons.directions_car_outlined, size: 48, color: AppTheme.textMuted),
+            const Icon(Icons.directions_car_outlined,
+                size: 48, color: AppTheme.textMuted),
             const SizedBox(height: AppTheme.space16),
             const Text(
               'No vehicles registered',
@@ -747,7 +917,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
         padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
         child: Column(
           children: [
-            const Icon(Icons.search_off_rounded, size: 48, color: AppTheme.textMuted),
+            const Icon(Icons.search_off_rounded,
+                size: 48, color: AppTheme.textMuted),
             const SizedBox(height: AppTheme.space16),
             const Text(
               'No matching vehicles found',
@@ -759,14 +930,14 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             ),
             const SizedBox(height: AppTheme.space4),
             const Text(
-              'No fleet records match your current search and filter settings.',
+              'Try adjusting your search query, company filter, or status filter.',
               style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppTheme.space20),
             OutlinedButton.icon(
               onPressed: _clearFilters,
-              icon: const Icon(Icons.close, size: 16),
+              icon: const Icon(Icons.filter_alt_off_outlined, size: 18),
               label: const Text('Clear all filters'),
             ),
           ],
