@@ -5,17 +5,21 @@ import 'package:http/http.dart' as http;
 import '../../core/config/api_config.dart';
 import '../../core/errors/api_exception.dart';
 import '../../models/vehicle.dart';
+import '../auth/auth_service.dart';
 
 /// Reusable HTTP client communicating with the Stark Group Vehicle REST API.
 class VehicleApiClient {
   final http.Client _client;
+  final AuthService _authService;
   final bool _isCustomClient;
   final Duration timeout;
 
   VehicleApiClient({
     http.Client? client,
+    AuthService? authService,
     this.timeout = const Duration(seconds: 10),
   })  : _client = client ?? http.Client(),
+        _authService = authService ?? AuthService.instance,
         _isCustomClient = client != null;
 
   void dispose() {
@@ -97,25 +101,41 @@ class VehicleApiClient {
     T Function(http.Response response) parser, {
     String? body,
   }) async {
+    final requestHeaders = Map<String, String>.from(_headers);
+
+    // Only attach authorization bearer token to trusted configured backend
+    final isTrustedOrigin = uri.scheme == ApiConfig.baseUri.scheme &&
+        uri.host == ApiConfig.baseUri.host &&
+        uri.port == ApiConfig.baseUri.port;
+
+    if (isTrustedOrigin && _authService.isAuthenticated) {
+      final token = _authService.currentSession?.accessToken;
+      if (token != null && token.isNotEmpty) {
+        requestHeaders['Authorization'] = 'Bearer $token';
+      }
+    }
+
+    final currentSessionId = _authService.currentSession?.sessionId;
+
     try {
       final http.Response response;
       switch (method) {
         case 'GET':
-          response = await _client.get(uri, headers: _headers).timeout(timeout);
+          response = await _client.get(uri, headers: requestHeaders).timeout(timeout);
           break;
         case 'POST':
           response = await _client
-              .post(uri, headers: _headers, body: body)
+              .post(uri, headers: requestHeaders, body: body)
               .timeout(timeout);
           break;
         case 'PUT':
           response = await _client
-              .put(uri, headers: _headers, body: body)
+              .put(uri, headers: requestHeaders, body: body)
               .timeout(timeout);
           break;
         case 'DELETE':
           response = await _client
-              .delete(uri, headers: _headers)
+              .delete(uri, headers: requestHeaders)
               .timeout(timeout);
           break;
         default:
@@ -124,6 +144,13 @@ class VehicleApiClient {
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return parser(response);
+      }
+
+      if (response.statusCode == 401) {
+        _authService.handleUnauthorized(
+          forSessionId: currentSessionId,
+          reason: 'Session expired. Please sign in again.',
+        );
       }
 
       throw _parseError(response);

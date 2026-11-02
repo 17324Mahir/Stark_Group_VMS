@@ -37,5 +37,8 @@ class ApiConfig {
 
   /// Single vehicle resource URI: `${baseUri}/api/vehicles/{id}`
   static Uri vehicleUri(int id) => baseUri.replace(path: '/api/vehicles/$id');
+
+  /// Authentication login endpoint URI: `${baseUri}/api/auth/login`
+  static Uri get authLoginUri => baseUri.replace(path: '/api/auth/login');
 }
 

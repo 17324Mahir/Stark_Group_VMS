@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/responsive.dart';
+import '../data/auth/auth_service.dart';
 import '../router/app_router.dart';
 
 /// Top-level application shell providing persistent sidebar on desktop,
@@ -22,7 +23,29 @@ class AppShell extends StatelessWidget {
   });
 
   void _handleSignOut(BuildContext context) {
-    Navigator.of(context).pushReplacementNamed(AppRouter.loginRoute);
+    AuthService.instance.signOut();
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      AppRouter.loginRoute,
+      (route) => false,
+    );
+  }
+
+  static String _getUserInitials(String email) {
+    if (email.isEmpty) return 'AD';
+    final parts = email.split('@')[0].split('.');
+    if (parts.length >= 2 && parts[0].isNotEmpty && parts[1].isNotEmpty) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return email.substring(0, email.length >= 2 ? 2 : 1).toUpperCase();
+  }
+
+  static String _getUserDisplayName(String email) {
+    if (email.isEmpty) return 'Administrator';
+    final namePart = email.split('@')[0];
+    return namePart
+        .split('.')
+        .map((part) => part.isNotEmpty ? part[0].toUpperCase() + part.substring(1) : '')
+        .join(' ');
   }
 
   @override
@@ -84,7 +107,7 @@ class AppShell extends StatelessWidget {
   Widget _buildDemoChip() {
     return Tooltip(
       message:
-          'Connected to live PostgreSQL database via Spring Boot REST API. Demo login is active.',
+          'Authenticated with signed JWT bearer token. Persistent fleet data synchronized with PostgreSQL.',
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
@@ -95,10 +118,10 @@ class AppShell extends StatelessWidget {
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.dns_outlined, size: 12, color: Color(0xFF15803D)),
+            Icon(Icons.verified_user_outlined, size: 12, color: Color(0xFF15803D)),
             SizedBox(width: 4),
             Text(
-              'Database Connected',
+              'JWT Protected',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
@@ -223,6 +246,10 @@ class AppShell extends StatelessWidget {
   }
 
   Widget _buildSidebarFooter(BuildContext context) {
+    final email = AuthService.instance.currentEmail ?? 'admin@starkgroup.test';
+    final initials = _getUserInitials(email);
+    final displayName = _getUserDisplayName(email);
+
     return Padding(
       padding: const EdgeInsets.all(AppTheme.space16),
       child: Row(
@@ -230,9 +257,9 @@ class AppShell extends StatelessWidget {
           CircleAvatar(
             radius: 16,
             backgroundColor: AppTheme.primaryBlue,
-            child: const Text(
-              'DU',
-              style: TextStyle(
+            child: Text(
+              initials,
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
@@ -240,14 +267,14 @@ class AppShell extends StatelessWidget {
             ),
           ),
           const SizedBox(width: AppTheme.space12),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Demo User',
-                  style: TextStyle(
+                  displayName,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -255,8 +282,8 @@ class AppShell extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  'demo@starkgroup.test',
-                  style: TextStyle(
+                  email,
+                  style: const TextStyle(
                     color: Color(0xFF94A3B8),
                     fontSize: 11,
                   ),
@@ -310,6 +337,10 @@ class AppShell extends StatelessWidget {
   }
 
   Widget _buildUserAccountMenu(BuildContext context) {
+    final email = AuthService.instance.currentEmail ?? 'admin@starkgroup.test';
+    final initials = _getUserInitials(email);
+    final displayName = _getUserDisplayName(email);
+
     return PopupMenuButton<String>(
       tooltip: 'User account options',
       offset: const Offset(0, 44),
@@ -323,33 +354,33 @@ class AppShell extends StatelessWidget {
           CircleAvatar(
             radius: 14,
             backgroundColor: AppTheme.primaryBlue,
-            child: const Text(
-              'DU',
-              style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+            child: Text(
+              initials,
+              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(width: 8),
-          const Text(
-            'Demo User',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          Text(
+            displayName,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 4),
           const Icon(Icons.arrow_drop_down, size: 18, color: AppTheme.textMuted),
         ],
       ),
       itemBuilder: (ctx) => [
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           enabled: false,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Demo Administrator',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textDark),
+                displayName,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textDark),
               ),
               Text(
-                'demo@starkgroup.test',
-                style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                email,
+                style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
               ),
             ],
           ),

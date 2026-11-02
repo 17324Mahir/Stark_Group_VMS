@@ -6,7 +6,9 @@ import com.starkgroup.vms.domain.VehicleStatus;
 import com.starkgroup.vms.dto.CreateVehicleRequest;
 import com.starkgroup.vms.dto.UpdateVehicleRequest;
 import com.starkgroup.vms.repository.VehicleRepository;
+import com.starkgroup.vms.service.JwtService;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,7 +39,16 @@ class VehicleApiIntegrationTest {
     @Autowired
     private VehicleRepository vehicleRepository;
 
+    @Autowired
+    private JwtService jwtService;
+
+    private String authToken;
     private final List<Long> createdVehicleIds = new ArrayList<>();
+
+    @BeforeEach
+    void setUp() {
+        authToken = "Bearer " + jwtService.generateToken("test@starkgroup.test");
+    }
 
     @AfterEach
     void tearDown() {
@@ -61,6 +72,7 @@ class VehicleApiIntegrationTest {
         );
 
         MvcResult createResult = mockMvc.perform(post("/api/vehicles")
+                        .header("Authorization", authToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest)))
                 .andExpect(status().isCreated())
@@ -76,13 +88,15 @@ class VehicleApiIntegrationTest {
         createdVehicleIds.add(vehicleId);
 
         // 2. Fetch that vehicle by ID
-        mockMvc.perform(get("/api/vehicles/{id}", vehicleId))
+        mockMvc.perform(get("/api/vehicles/{id}", vehicleId)
+                        .header("Authorization", authToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id", is(vehicleId.intValue())))
                 .andExpect(jsonPath("$.vehicleNumber", is("IT-VEH-1001")));
 
         // 3. Fetch list and confirm vehicle appears
-        mockMvc.perform(get("/api/vehicles"))
+        mockMvc.perform(get("/api/vehicles")
+                        .header("Authorization", authToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[*].vehicleNumber", hasItem("IT-VEH-1001")));
 
@@ -97,6 +111,7 @@ class VehicleApiIntegrationTest {
         );
 
         mockMvc.perform(put("/api/vehicles/{id}", vehicleId)
+                        .header("Authorization", authToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(updateRequest)))
                 .andExpect(status().isOk())
@@ -107,7 +122,8 @@ class VehicleApiIntegrationTest {
                 .andExpect(jsonPath("$.status", is("MAINTENANCE")));
 
         // 5. Fetch again and confirm persistence
-        mockMvc.perform(get("/api/vehicles/{id}", vehicleId))
+        mockMvc.perform(get("/api/vehicles/{id}", vehicleId)
+                        .header("Authorization", authToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.company", is("Stark Space")))
                 .andExpect(jsonPath("$.status", is("MAINTENANCE")));
@@ -123,6 +139,7 @@ class VehicleApiIntegrationTest {
         );
 
         mockMvc.perform(post("/api/vehicles")
+                        .header("Authorization", authToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(duplicateRequest)))
                 .andExpect(status().isConflict())
@@ -140,6 +157,7 @@ class VehicleApiIntegrationTest {
         );
 
         MvcResult secondResult = mockMvc.perform(post("/api/vehicles")
+                        .header("Authorization", authToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(secondCreate)))
                 .andExpect(status().isCreated())
@@ -159,22 +177,26 @@ class VehicleApiIntegrationTest {
         );
 
         mockMvc.perform(put("/api/vehicles/{id}", secondId)
+                        .header("Authorization", authToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(secondUpdate)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code", is("DUPLICATE_VEHICLE_NUMBER")));
 
         // 8. Delete the created vehicle
-        mockMvc.perform(delete("/api/vehicles/{id}", vehicleId))
+        mockMvc.perform(delete("/api/vehicles/{id}", vehicleId)
+                        .header("Authorization", authToken))
                 .andExpect(status().isNoContent());
 
         // 9. Fetch the deleted ID and confirm 404
-        mockMvc.perform(get("/api/vehicles/{id}", vehicleId))
+        mockMvc.perform(get("/api/vehicles/{id}", vehicleId)
+                        .header("Authorization", authToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code", is("VEHICLE_NOT_FOUND")));
 
         // Clean up second vehicle via HTTP DELETE
-        mockMvc.perform(delete("/api/vehicles/{id}", secondId))
+        mockMvc.perform(delete("/api/vehicles/{id}", secondId)
+                        .header("Authorization", authToken))
                 .andExpect(status().isNoContent());
         createdVehicleIds.clear();
     }

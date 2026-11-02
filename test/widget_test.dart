@@ -1,17 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stark_vms/core/theme/app_theme.dart';
+import 'package:stark_vms/data/auth/auth_service.dart';
 import 'package:stark_vms/data/mock_data.dart';
 import 'package:stark_vms/data/vehicle_repository.dart';
 import 'package:stark_vms/main.dart';
+import 'package:stark_vms/router/app_router.dart';
 
 void main() {
   setUp(() {
+    AuthService.setInstanceForTesting(AuthService.fake());
     VehicleRepository.setInstanceForTesting(
       VehicleRepository.fake(initialVehicles: initialMockVehicles),
     );
   });
 
-  testWidgets('1. Login screen renders with Stark Group branding and demo credentials',
+  Future<void> signInHelper(WidgetTester tester) async {
+    AuthService.instance.setAuthenticatedForTesting(email: 'demo.user@starkgroup.test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        initialRoute: AppRouter.vehiclesRoute,
+        onGenerateRoute: AppRouter.generateRoute,
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('1. Login screen renders with Stark Group branding and input fields',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -22,9 +38,9 @@ void main() {
 
     expect(find.text('STARK GROUP'), findsOneWidget);
     expect(find.text('Sign in to your account'), findsOneWidget);
-    expect(find.text('demo@starkgroup.test'), findsAtLeast(1));
+    expect(find.text('Email address'), findsOneWidget);
+    expect(find.text('Password'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
-    expect(find.text('Autofill'), findsOneWidget);
   });
 
   testWidgets('2. Invalid login shows validation error or inline credentials alert',
@@ -41,43 +57,30 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Please enter your email address.'), findsOneWidget);
+    expect(find.text('Please enter your password.'), findsOneWidget);
 
-    // 2. Submit wrong credentials
+    // 2. Submit invalid email format
     await tester.enterText(
-      find.widgetWithText(TextFormField, '').first,
-      'wrong@starkgroup.test',
+      find.byType(TextFormField).first,
+      'invalid-email-format',
     );
     await tester.enterText(
-      find.byType(TextFormField).at(1),
+      find.byType(TextFormField).last,
       'WrongPass!123',
     );
     await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Invalid credentials. Please use the demo credentials provided below.'),
-      findsOneWidget,
-    );
+    expect(find.text('Please enter a valid email address.'), findsOneWidget);
   });
 
-  testWidgets('3. Autofill demo credentials and sign in navigates to Vehicles',
+  testWidgets('3. Valid authentication navigates to Vehicles directory',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Click Autofill
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-
-    // Tap Sign in
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
     // Verify Vehicles screen loaded
     expect(find.text('Fleet Registry'), findsOneWidget);
@@ -90,15 +93,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
     // Enter search query
     final searchField = find.byType(TextField);
@@ -122,15 +117,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
     // Check pagination summary
     expect(find.text('Showing 1–10 of 18 vehicles'), findsOneWidget);
@@ -155,36 +142,32 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
-
-    // Click Register vehicle
+    // Tap "Register vehicle"
     await tester.tap(find.text('Register vehicle'));
     await tester.pumpAndSettle();
 
-    expect(find.text('1. Vehicle Identity'), findsOneWidget);
+    expect(find.text('Register Vehicle'), findsAtLeast(1));
 
-    // Test duplicate detection with existing vehicle STK-1001
+    // Try registering with a duplicate vehicle number (STK-1001 already exists)
     final vehicleNumField = find.byType(TextFormField).at(0);
-    await tester.enterText(vehicleNumField, 'stk-1001'); // Case-insensitive test
-    await tester.enterText(find.byType(TextFormField).at(1), 'TestBrand');
-    await tester.enterText(find.byType(TextFormField).at(2), 'TestModel');
+    await tester.enterText(vehicleNumField, 'stk-1001');
 
-    // Click Register vehicle button
+    final brandField = find.byType(TextFormField).at(1);
+    await tester.enterText(brandField, 'TestBrand');
+
+    final modelField = find.byType(TextFormField).at(2);
+    await tester.enterText(modelField, 'TestModel');
+
+    // Submit form
     await tester.tap(find.widgetWithText(ElevatedButton, 'Register vehicle'));
     await tester.pumpAndSettle();
 
-    // Expect duplicate error
+    // Duplicate error should appear
     expect(find.textContaining('already registered'), findsOneWidget);
 
-    // Now enter a unique number that sorts to page 1
+    // Fix the number to a unique one that sorts to page 1
     await tester.enterText(vehicleNumField, 'STK-0001');
     await tester.tap(find.widgetWithText(ElevatedButton, 'Register vehicle'));
     await tester.pumpAndSettle();
@@ -201,15 +184,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
     // Find delete icon for first row
     final deleteButtons = find.byIcon(Icons.delete_outline);
@@ -228,7 +203,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Dialog closed, vehicles still present
-    expect(find.text('Delete Vehicle'), findsNothing);
+    expect(find.text('Keep Vehicle'), findsNothing);
   });
 
   testWidgets('8. Responsive layout works across Desktop, Tablet, and Mobile viewports',
@@ -267,15 +242,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
     // Tap first edit button
     final editButtons = find.byIcon(Icons.edit_outlined);
@@ -304,15 +271,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
     // Tap first edit button
     await tester.tap(find.byIcon(Icons.edit_outlined).first);
@@ -343,15 +302,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
+    await signInHelper(tester);
 
     // Tap sign out button in sidebar
     final signOutBtn = find.byTooltip('Sign out');

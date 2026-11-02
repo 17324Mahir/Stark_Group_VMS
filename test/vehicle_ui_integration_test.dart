@@ -1,10 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stark_vms/core/theme/app_theme.dart';
+import 'package:stark_vms/data/auth/auth_service.dart';
 import 'package:stark_vms/data/vehicle_repository.dart';
-import 'package:stark_vms/main.dart';
 import 'package:stark_vms/models/vehicle.dart';
+import 'package:stark_vms/router/app_router.dart';
 
 void main() {
+  setUp(() {
+    AuthService.instance.setAuthenticatedForTesting(email: 'tester@starkgroup.test');
+  });
+
+  Widget buildApp() {
+    return MaterialApp(
+      theme: AppTheme.lightTheme,
+      initialRoute: AppRouter.vehiclesRoute,
+      onGenerateRoute: AppRouter.generateRoute,
+    );
+  }
+
   testWidgets('Renders empty fleet state when repository has 0 records',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 800);
@@ -14,14 +28,7 @@ void main() {
     final fakeRepo = VehicleRepository.fake(initialVehicles: []);
     VehicleRepository.setInstanceForTesting(fakeRepo);
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in to reach vehicle list
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
     expect(find.text('No vehicles registered'), findsOneWidget);
@@ -37,19 +44,11 @@ void main() {
     final fakeRepo = VehicleRepository.fake(initialVehicles: []);
     VehicleRepository.setInstanceForTesting(fakeRepo);
 
-    await tester.pumpWidget(const StarkVmsApp());
+    await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pumpAndSettle();
-
-    // Simulate repository error
-    fakeRepo.reset([]);
     // Force error state
+    fakeRepo.reset([]);
     // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
     fakeRepo.notifyListeners();
 
@@ -75,14 +74,7 @@ void main() {
     ]);
     VehicleRepository.setInstanceForTesting(fakeRepo);
 
-    await tester.pumpWidget(const StarkVmsApp());
-    await tester.pumpAndSettle();
-
-    // Sign in
-    await tester.tap(find.text('Autofill'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sign in'));
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
     // Open Register Vehicle screen

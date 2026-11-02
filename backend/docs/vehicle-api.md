@@ -15,25 +15,68 @@ Comprehensive specification and guide for the Vehicle REST API service (`stark-v
   ./gradlew bootRun --args='--server.port=8081'
   ```
 - **Content Type**: `application/json`
-- **Authentication**: None in this phase (open for development and local fleet integration). Authentication/authorization will be introduced in subsequent milestones.
+- **Authentication**: Stateless Bearer JWT via Spring Security. All `/api/vehicles/**` endpoints require an `Authorization: Bearer <access-token>` header obtained from `POST /api/auth/login`.
 
 ---
 
 ## 2. Startup Configuration & Environment
 
-The backend requires a running PostgreSQL instance and externalized datasource environment variables. Never hardcode real credentials in tracked files.
+The backend requires a running PostgreSQL instance, externalized datasource environment variables, and JWT/course-user security parameters. Never hardcode real credentials in tracked files.
 
 ```bash
+# Database connectivity
 export DB_URL="jdbc:postgresql://localhost:5432/stark_vms_db"
 export DB_USERNAME="vms_user"
 export DB_PASSWORD="your_secure_password"
+
+# Security & JWT configuration (secret must be at least 32 characters)
+export JWT_SECRET="your-strong-secret-key-that-is-at-least-32-chars-long!"
+export JWT_EXPIRATION_SECONDS=900
+export JWT_ISSUER="stark-vms-backend"
+export JWT_AUDIENCE="stark-vms-frontend"
+
+# Course user credentials
+export COURSE_USER_EMAIL="admin@starkgroup.test"
+export COURSE_USER_PASSWORD_HASH="<BCrypt hash generated via ./gradlew hashPassword>"
 
 cd backend
 ./gradlew bootRun
 ```
 
 ### Fail-Fast Behavior
-If any of `DB_URL`, `DB_USERNAME`, or `DB_PASSWORD` are missing, application startup aborts with an initialization error.
+If any of `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, or `JWT_SECRET` are missing or invalid, application startup aborts with a configuration failure.
+
+---
+
+## 2.1. Authentication Contract (`POST /api/auth/login`)
+
+- **Method & Path**: `POST /api/auth/login`
+- **Security Level**: Public
+- **Request Body**:
+  ```json
+  {
+    "email": "admin@starkgroup.test",
+    "password": "<entered password>"
+  }
+  ```
+- **Success Status**: `200 OK`
+- **Headers**:
+  `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`
+  `Pragma: no-cache`
+- **Response Body**:
+  ```json
+  {
+    "accessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+    "tokenType": "Bearer",
+    "expiresIn": 900,
+    "user": {
+      "email": "admin@starkgroup.test"
+    }
+  }
+  ```
+- **Failure Responses**:
+  - `400 Bad Request`: Field validation error (e.g., blank required fields or invalid email syntax).
+  - `401 Unauthorized`: Generic error message `"Email or password is incorrect."` (never reveals account existence).
 
 ---
 

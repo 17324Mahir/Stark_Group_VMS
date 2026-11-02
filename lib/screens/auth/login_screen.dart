@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import '../../core/errors/api_exception.dart';
 import '../../core/theme/app_theme.dart';
+import '../../data/auth/auth_service.dart';
 import '../../router/app_router.dart';
 
-/// Admin Login demonstration screen for the Stark Group VMS.
+/// Admin Login screen for the Stark Group VMS.
 ///
-/// Validates against fictional demo credentials (demo@starkgroup.test / Demo@12345)
-/// with full inline validation, keyboard submission, and demo state notices.
+/// Authenticates against Spring Boot POST /api/auth/login, receiving a signed JWT access token.
+/// Employs full inline validation, keyboard submission, loading indicators, and error mapping.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -14,9 +16,6 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  static const String demoEmail = 'demo@starkgroup.test';
-  static const String demoPassword = 'Demo@12345';
-
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -34,47 +33,56 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _autofillDemoCredentials() {
-    setState(() {
-      _emailController.text = demoEmail;
-      _passwordController.text = demoPassword;
-      _authErrorMessage = null;
-    });
-    _formKey.currentState?.validate();
-  }
-
-  void _handleSubmit() {
+  Future<void> _handleSubmit() async {
     if (_isSubmitting) return;
 
     setState(() {
       _authErrorMessage = null;
     });
+    AuthService.instance.clearExpiredNotice();
 
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
     final email = _emailController.text.trim();
-    final password = _passwordController.text;
+    final password = _passwordController.text; // Do NOT trim password
 
     setState(() {
       _isSubmitting = true;
     });
 
-    // Simulate quick local authentication check
-    Future.delayed(const Duration(milliseconds: 250), () {
+    try {
+      await AuthService.instance.login(email, password);
+
       if (!mounted) return;
 
-      if (email.toLowerCase() == demoEmail.toLowerCase() && password == demoPassword) {
-        setState(() => _isSubmitting = false);
-        Navigator.of(context).pushReplacementNamed(AppRouter.vehiclesRoute);
-      } else {
-        setState(() {
-          _isSubmitting = false;
-          _authErrorMessage = 'Invalid credentials. Please use the demo credentials provided below.';
-        });
-      }
-    });
+      _passwordController.clear();
+      setState(() => _isSubmitting = false);
+
+      Navigator.of(context).pushReplacementNamed(AppRouter.vehiclesRoute);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _passwordController.clear();
+      setState(() {
+        _isSubmitting = false;
+        _authErrorMessage = e.message;
+      });
+      _passwordFocusNode.requestFocus();
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isSubmitting = false;
+        _authErrorMessage = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      _passwordController.clear();
+      setState(() {
+        _isSubmitting = false;
+        _authErrorMessage = 'An unexpected error occurred. Please try again.';
+      });
+    }
   }
 
   @override
@@ -109,6 +117,18 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: AppTheme.space24),
                         const Divider(height: 1),
                         const SizedBox(height: AppTheme.space24),
+                        ValueListenableBuilder<String?>(
+                          valueListenable: AuthService.instance.sessionExpiredMessage,
+                          builder: (context, sessionNotice, _) {
+                            if (sessionNotice != null) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: AppTheme.space16),
+                                child: _buildSessionNoticeAlert(sessionNotice),
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          },
+                        ),
                         if (_authErrorMessage != null) ...[
                           _buildAuthErrorAlert(_authErrorMessage!),
                           const SizedBox(height: AppTheme.space16),
@@ -119,9 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: AppTheme.space24),
                         _buildSubmitButton(),
                         const SizedBox(height: AppTheme.space24),
-                        _buildDemoCredentialsPanel(),
-                        const SizedBox(height: AppTheme.space16),
-                        _buildDemoNotice(),
+                        _buildSecurityNotice(),
                       ],
                     ),
                   ),
@@ -197,6 +215,38 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Widget _buildSessionNoticeAlert(String message) {
+    return Container(
+      padding: const EdgeInsets.all(AppTheme.space12),
+      decoration: BoxDecoration(
+        color: AppTheme.statusMaintenanceBg,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: AppTheme.statusMaintenanceBorder),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.info_outline_rounded,
+            size: 18,
+            color: AppTheme.statusMaintenanceText,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppTheme.statusMaintenanceText,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAuthErrorAlert(String message) {
     return Container(
       padding: const EdgeInsets.all(AppTheme.space12),
@@ -244,18 +294,18 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: AppTheme.space4),
         TextFormField(
           controller: _emailController,
+          enabled: !_isSubmitting,
           keyboardType: TextInputType.emailAddress,
           textInputAction: TextInputAction.next,
           onFieldSubmitted: (_) => _passwordFocusNode.requestFocus(),
           decoration: const InputDecoration(
-            hintText: 'demo@starkgroup.test',
+            hintText: 'user@starkgroup.test',
           ),
           validator: (value) {
             final trimmed = value?.trim() ?? '';
             if (trimmed.isEmpty) {
               return 'Please enter your email address.';
             }
-            // Basic email validation regex
             final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
             if (!emailRegex.hasMatch(trimmed)) {
               return 'Please enter a valid email address.';
@@ -283,6 +333,7 @@ class _LoginScreenState extends State<LoginScreen> {
         TextFormField(
           controller: _passwordController,
           focusNode: _passwordFocusNode,
+          enabled: !_isSubmitting,
           obscureText: _obscurePassword,
           textInputAction: TextInputAction.done,
           onFieldSubmitted: (_) => _handleSubmit(),
@@ -325,71 +376,10 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildDemoCredentialsPanel() {
-    return Container(
-      padding: const EdgeInsets.all(AppTheme.space12),
-      decoration: BoxDecoration(
-        color: AppTheme.primaryBlueSubtle,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        border: Border.all(color: const Color(0xFFBFDBFE)), // Blue 200
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.vpn_key_outlined, size: 16, color: AppTheme.primaryBlue),
-                  SizedBox(width: 6),
-                  Text(
-                    'Demo Credentials',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.primaryBlue,
-                    ),
-                  ),
-                ],
-              ),
-              TextButton(
-                onPressed: _autofillDemoCredentials,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text(
-                  'Autofill',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppTheme.space8),
-          const Text(
-            'Email: $demoEmail\nPassword: $demoPassword',
-            style: TextStyle(
-              fontSize: 12,
-              fontFamily: 'monospace',
-              color: AppTheme.textDark,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDemoNotice() {
+  Widget _buildSecurityNotice() {
     return const Center(
       child: Text(
-        'Demonstration access · Real database-backed vehicle data\nConnected to PostgreSQL via Spring Boot REST API',
+        'Protected by Spring Security · Signed JWT Bearer Authentication\nTokens are stored in memory only and expire after 15 minutes',
         textAlign: TextAlign.center,
         style: TextStyle(
           fontSize: 11,

@@ -57,6 +57,14 @@ class VehicleRepository extends ChangeNotifier {
 
   bool get hasError => _errorMessage != null;
 
+  /// Clears in-memory vehicle cache upon user sign-out or session invalidation.
+  void clearCache() {
+    _vehicles.clear();
+    _errorMessage = null;
+    _isLoading = false;
+    notifyListeners();
+  }
+
   /// Resets test seed data (used by widget tests).
   void reset([List<Vehicle>? seed]) {
     _vehicles.clear();

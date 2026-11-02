@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/theme/app_theme.dart';
+import '../data/auth/auth_service.dart';
 import '../models/vehicle.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/vehicles/vehicle_form_screen.dart';
@@ -14,6 +15,15 @@ class AppRouter {
   static const String vehicleEditRoute = '/vehicles/edit';
 
   static Route<dynamic> generateRoute(RouteSettings settings) {
+    // Route guard: require active in-memory session for all protected routes
+    final isProtected = settings.name != loginRoute;
+    if (isProtected && !AuthService.instance.isAuthenticated) {
+      return MaterialPageRoute(
+        settings: const RouteSettings(name: loginRoute),
+        builder: (_) => const LoginScreen(),
+      );
+    }
+
     switch (settings.name) {
       case loginRoute:
         return MaterialPageRoute(
