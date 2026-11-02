@@ -26,6 +26,8 @@ migrate_working_dir/
 # Secrets, Credentials, & Environment configs
 *.env
 .env.*
+!.env.example
+*.local
 *.pem
 *.key
 *.cert

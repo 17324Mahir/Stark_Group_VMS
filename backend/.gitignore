@@ -1,0 +1,13 @@
+# Gradle build files
+.gradle/
+build/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# IDE files
+.idea/
+*.iml

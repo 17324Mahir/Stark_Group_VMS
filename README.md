@@ -8,8 +8,10 @@ An enterprise-grade, desktop-first admin portal frontend for managing fleet oper
 
 The **Stark Group Vehicle Management System (VMS)** frontend is built with **Flutter Web** utilizing **Material 3**. It provides a clean, restrained, accessible business administration interface designed for daily fleet-management work.
 
-> **Architecture & Demonstration Note:**  
-> This project contains exclusively the **Frontend** client application. It is decoupled from backend systems and will interface with a separate **Java Spring Boot** REST backend in a subsequent phase. All vehicle records operate on a single shared in-memory mock repository (`VehicleRepository`). Changes are interactive and reset upon browser refresh.
+> **Architecture Note:**  
+> This monorepo workspace contains:
+> 1. **Frontend (`/`)**: A Flutter Web client application using Material 3 with interactive mock fleet state.
+> 2. **Backend (`/backend`)**: A Java Spring Boot application providing the database connectivity foundation to PostgreSQL via Spring Data JPA and Spring Boot Actuator. Vehicle schema and CRUD REST APIs will be layered in subsequent phases.
 
 ---
 
@@ -131,6 +133,104 @@ flutter test
 flutter build web --release
 ```
 Distribution files are generated in `build/web/`.
+
+---
+
+## ☕ Backend Database Connectivity (`backend/`)
+
+The backend service is built with **Spring Boot 3.4.x**, **Spring Data JPA**, and **PostgreSQL JDBC**. It is configured for secure, externalized configuration with no automated DDL execution.
+
+### 1. Prerequisites
+- **Java**: JDK 21+ (built with OpenJDK 26 targeting Java 21 bytecode)
+- **Database**: PostgreSQL 16+ (tested on PostgreSQL 18.6)
+- **Gradle**: Provided via Gradle wrapper (`./gradlew`)
+
+### 2. Database Preparation
+Create a dedicated local development database and a non-superuser application role in PostgreSQL:
+
+```sql
+-- Connect via psql as administrator:
+CREATE DATABASE stark_vms_db;
+CREATE USER vms_user WITH PASSWORD 'your_secure_password';
+GRANT ALL PRIVILEGES ON DATABASE stark_vms_db TO vms_user;
+
+-- Grant schema permissions:
+\c stark_vms_db
+GRANT ALL ON SCHEMA public TO vms_user;
+```
+
+### 3. Environment Variables
+The application datasource properties are strictly externalized. Do not hardcode credentials in source files.
+
+| Variable | Description | Example Format |
+|---|---|---|
+| `DB_URL` | JDBC Connection URL | `jdbc:postgresql://localhost:5432/stark_vms_db` |
+| `DB_USERNAME` | PostgreSQL Application Role | `vms_user` |
+| `DB_PASSWORD` | Application User Password | `your_secure_password` |
+
+A template is available at [`backend/.env.example`](file:///Users/mahir/Documents/Projects/stark_vms/backend/.env.example). You can export these variables into your shell or configure them in your IDE Run Configuration:
+
+```bash
+export DB_URL="jdbc:postgresql://localhost:5432/stark_vms_db"
+export DB_USERNAME="vms_user"
+export DB_PASSWORD="your_secure_password"
+```
+
+> **Fail-Fast Protection:**  
+> If any of the required environment variables are absent, the application refuses to start with a configuration failure rather than falling back to an in-memory or default database.
+
+### 4. Schema Safety
+To ensure zero unintended modifications to existing production or shared databases:
+- `spring.jpa.hibernate.ddl-auto=none`
+- `spring.sql.init.mode=never`
+
+No tables, sequences, or test data are generated on application startup.
+
+### 5. Running Integration Tests
+Execute the automated database connectivity test to verify credentials, connection validity, product name (`PostgreSQL`), and active user/database queries:
+
+```bash
+cd backend
+DB_URL="jdbc:postgresql://localhost:5432/stark_vms_db" \
+DB_USERNAME="vms_user" \
+DB_PASSWORD="your_secure_password" \
+./gradlew test
+```
+
+### 6. Starting the Backend Server
+```bash
+cd backend
+DB_URL="jdbc:postgresql://localhost:5432/stark_vms_db" \
+DB_USERNAME="vms_user" \
+DB_PASSWORD="your_secure_password" \
+./gradlew bootRun
+```
+The server starts by default on port `8080`.
+
+### 7. Actuator Health Verification
+Confirm the PostgreSQL connection health without leaking sensitive parameters:
+
+```bash
+curl -s http://localhost:8080/actuator/health
+```
+
+Expected JSON response:
+```json
+{
+  "status": "UP",
+  "components": {
+    "db": {
+      "status": "UP",
+      "details": {
+        "database": "PostgreSQL",
+        "validationQuery": "isValid()"
+      }
+    },
+    "diskSpace": { "status": "UP" },
+    "ping": { "status": "UP" }
+  }
+}
+```
 
 ---
 
