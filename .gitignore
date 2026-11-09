@@ -70,3 +70,7 @@ windows/flutter/ephemeral/
 
 # Widget Preview
 .widget_preview/
+
+# Netlify and CI build caches
+.flutter-sdk/
+.netlify/

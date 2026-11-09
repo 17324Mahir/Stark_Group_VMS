@@ -19,4 +19,3 @@ public record ErrorResponse(
         return new ErrorResponse(Instant.now(), status, code, message, path, fieldErrors != null ? fieldErrors : List.of());
     }
 }
-

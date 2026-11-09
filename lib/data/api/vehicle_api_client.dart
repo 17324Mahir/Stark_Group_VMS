@@ -220,4 +220,3 @@ class VehicleApiClient {
     );
   }
 }
-

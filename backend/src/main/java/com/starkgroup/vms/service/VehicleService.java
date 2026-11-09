@@ -5,6 +5,8 @@ import com.starkgroup.vms.dto.UpdateVehicleRequest;
 import com.starkgroup.vms.dto.VehicleResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 
@@ -16,8 +18,9 @@ public interface VehicleService {
 
     List<VehicleResponse> getAllVehicles();
 
+    Page<VehicleResponse> getVehicles(Pageable pageable);
+
     VehicleResponse updateVehicle(@NotNull Long id, @Valid @NotNull UpdateVehicleRequest request);
 
     void deleteVehicle(@NotNull Long id);
 }
-

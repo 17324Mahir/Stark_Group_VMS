@@ -1,0 +1,53 @@
+name: Backend Keep-Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render free tier from sleeping (sleep threshold is 15 minutes)
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  ping:
+    name: Ping Backend Health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send keep-alive HTTP requests
+        run: |
+          echo "=========================================="
+          echo "Sending keep-alive ping to Render backend..."
+          echo "Timestamp: $(date -u)"
+          echo "=========================================="
+          
+          # Target Assignment 1 backend URL
+          URL="https://vms-backend-i7bt.onrender.com"
+          
+          # 1. Warm up the root endpoint (allows up to 75s with retries for cold starts)
+          echo "Pinging root endpoint: $URL/"
+          STATUS_ROOT=$(curl -s -L -o /dev/null -w "%{http_code}" \
+            --connect-timeout 25 \
+            --max-time 75 \
+            --retry 3 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            "$URL/" || echo "TIMEOUT_OR_ERR")
+          echo "Root endpoint returned: $STATUS_ROOT"
+
+          # 2. Ping Spring Boot Actuator Health
+          echo "Pinging health endpoint: $URL/actuator/health"
+          STATUS_HEALTH=$(curl -s -L -o /dev/null -w "%{http_code}" \
+            --connect-timeout 25 \
+            --max-time 75 \
+            --retry 3 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            "$URL/actuator/health" || echo "TIMEOUT_OR_ERR")
+          echo "Health endpoint returned: $STATUS_HEALTH"
+
+          if [ "$STATUS_ROOT" = "200" ] || [ "$STATUS_HEALTH" = "200" ]; then
+            echo "SUCCESS: Backend is active, awake, and serving traffic."
+          else
+            echo "NOTE: Backend response - Root: $STATUS_ROOT, Health: $STATUS_HEALTH"
+          fi
+
+          # Always exit cleanly so transient cold-start delays do not send failure emails
+          exit 0

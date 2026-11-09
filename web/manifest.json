@@ -1,11 +1,11 @@
 {
-    "name": "stark_vms",
-    "short_name": "stark_vms",
+    "name": "Stark Group - Vehicle Management System",
+    "short_name": "Stark VMS",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F8FAFC",
+    "theme_color": "#0F172A",
+    "description": "Fleet operations, vehicle registry, and asset tracking portal.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

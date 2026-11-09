@@ -16,3 +16,5 @@ application-local.yaml
 # IDE files
 .idea/
 *.iml
+.DS_Store
+bin/

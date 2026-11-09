@@ -10,4 +10,3 @@ public class VehicleNotFoundException extends RuntimeException {
         super("Vehicle not found with ID: " + id);
     }
 }
-

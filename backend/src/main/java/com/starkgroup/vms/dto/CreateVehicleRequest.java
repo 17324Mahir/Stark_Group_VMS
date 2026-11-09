@@ -30,4 +30,3 @@ public record CreateVehicleRequest(
     VehicleStatus status
 ) {
 }
-

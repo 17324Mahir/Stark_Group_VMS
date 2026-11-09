@@ -1,28 +1,40 @@
-# Stark Group Vehicle Management System (VMS)
+# Stark Group Vehicle Management System (VMS) - Monorepo
 
-An enterprise-grade, desktop-first admin portal for managing fleet operations across Stark Group subsidiaries, featuring a **Flutter Web** frontend connected via REST to a **Spring Boot 3.4** backend secured with **Spring Security JWT Authentication** and backed by **PostgreSQL**.
+An enterprise-grade, full-stack vehicle fleet management solution for Stark Group subsidiaries, featuring a **Flutter Web** frontend (Material 3) connected to a **Spring Boot 3.4** backend secured with **Spring Security JWT Authentication**, backed by **PostgreSQL**.
 
 ---
 
-## 🚀 Architecture Overview
+## 🌐 Live Deployments & Test Access
 
-This monorepo workspace contains a decoupled full-stack architecture with end-to-end authentication:
+* **Frontend (Netlify):** https://vms-frontend-stark.netlify.app
+* **Backend API (Render):** https://vms-backend-i7bt.onrender.com
+* **Test User Account:**
+  * **Email:** `test@starkgroup.test`
+  * **Password:** `Password123!`
+  * *Note:* Logging in with this test account displays the 4 pre-seeded testcase vehicles (`STK-001`, `STK-003`, `STK-004`, `STK-005`). Any newly registered account starts with an empty fleet (`[]`) due to per-user data isolation.
+
+---
+
+## 🚀 Workspace Architecture
+
+This repository is organized as a unified full-stack monorepo:
 
 1. **Frontend (`/`)**: A Flutter Web administration application utilizing Material 3 design tokens.
-   - Real authentication layer (`AuthService`) connecting to `POST /api/auth/login`.
-   - **In-Memory Token Storage**: Access tokens are stored strictly in memory; reloading the browser returns to the sign-in screen.
+   - Real authentication layer (`AuthService`) connecting to `POST /api/auth/login` and `POST /api/auth/register`.
+   - **Session Storage**: In-browser session persistence across page reloads via Web `sessionStorage`.
    - Shared `VehicleApiClient` automatically attaches `Authorization: Bearer <token>` to trusted backend endpoints (`ApiConfig.baseUri`).
    - Centralized 401 handling: automatically clears invalid sessions, wipes private vehicle caches, and prompts the user to sign in again.
-   - Comprehensive route guards protecting vehicle directories from direct unauthenticated URL entry or browser back navigation.
+   - Comprehensive route guards protecting vehicle directories from unauthenticated direct URL access or browser back navigation.
 2. **Backend (`/backend`)**: A Java 21 / Spring Boot 3.4 application providing:
    - **Spring Security 6.4 & OAuth2 Resource Server**: Bearer token JWT validation using HMAC-SHA256 (Nimbus JOSE).
-   - Real authentication endpoint at `POST /api/auth/login` verifying credentials against an externalized course user.
-   - Every Vehicle operation under `/api/vehicles/**` strictly requires valid JWT authentication.
-   - Full REST CRUD API with normalized unique Vehicle Numbers (case-insensitive, whitespace-trimmed).
-   - Standardized client-safe `ErrorResponse` contract (`400`, `401`, `403`, `404`, `409`, `405`, `415`, `500`).
-   - Granular CORS configuration for Flutter Web origins (`http://localhost:5173`).
-   - Explicit Flyway schema migration (`V1__create_vehicles_table.sql`) with Hibernate schema validation (`ddl-auto=validate`).
-   - Actuator health metrics for the PostgreSQL connection.
+   - Real authentication endpoints (`POST /api/auth/login`, `POST /api/auth/register`, `GET /api/auth/check-email`).
+   - Every Vehicle operation under `/api/vehicles/**` and `/vehicles/**` strictly requires valid JWT authentication.
+   - **Dual Routing & Pagination Support**:
+     - `GET /vehicles?page=0&size=10` returns Spring Page JSON (`content`, `number`, `size`, `totalElements`, `totalPages`, `last`).
+     - `GET /api/vehicles` returns flat JSON array `[...]` for frontend compatibility.
+   - **User Fleet Isolation**: Vehicles are scoped per authenticated user (`user_email`), ensuring new users only see vehicles they create.
+   - **Keep-Alive Service**: Automated background HTTP and database ping keeping Render instances warm and avoiding cold starts.
+   - Flyway database migrations (`V1`, `V2`, `V3`) with schema validation.
 
 ```
 ┌────────────────────────────────┐            HTTP / JSON            ┌──────────────────────────────────┐
@@ -244,7 +256,7 @@ flutter build web --release --dart-define=API_BASE_URL=https://api.vms.starkgrou
 ## 🧪 Testing & Verification
 
 ### 1. Flutter Test Suite
-Execute the 39 automated tests covering authentication, session state, route guards, token attachment, UI forms, and widget layouts:
+Execute the 53 automated tests covering authentication, session state, route guards, token attachment, vehicle CRUD operations, race condition handling, inline validation errors, and responsive layouts:
 
 ```bash
 flutter test
@@ -258,12 +270,65 @@ flutter analyze
 ```
 
 ### 3. Backend Test Suite
-Run the 38 Spring Boot unit and integration tests covering JWT creation, token decoding, expiry, tampering rejection, CORS preflight, controller protection, and Bean validation:
+Run the 66 Spring Boot unit, slice, and PostgreSQL integration tests covering JWT creation, token decoding, expiry, tampering rejection, CORS preflight, controller protection, duplicate vehicle rules, Bean validation, and direct SQL verification:
 
 ```bash
 cd backend
-./gradlew test
+
+# Focused HTTP + PostgreSQL integration test suite
+./gradlew test --tests "com.starkgroup.vms.controller.VehicleApiIntegrationTest" --rerun --no-daemon
+
+# Complete backend test suite
+./gradlew test --rerun --no-daemon
 ```
+
+---
+
+## 🔍 Authenticated End-to-End Verification & SQL Audit
+
+To manually verify the full authenticated vehicle management journey against PostgreSQL:
+
+1. **Start PostgreSQL & Spring Boot**: Follow the local startup steps above.
+2. **Authenticate & Acquire JWT**:
+   ```bash
+   TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"email":"course.admin@starkgroup.com","password":"your_password"}' \
+     | python3 -c "import sys, json; print(json.load(sys.stdin)['accessToken'])")
+   ```
+3. **Register Vehicle via API or Flutter UI**:
+   ```bash
+   curl -s -i -X POST http://localhost:8080/api/vehicles \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"vehicleNumber":"STK-VERIFY-01","company":"Stark Industries","type":"SUV","brand":"Tesla","model":"Model X","status":"ACTIVE"}'
+   ```
+4. **Audit PostgreSQL Row**:
+   ```bash
+   psql -U vms_user -d stark_vms_db -c "SELECT id, vehicle_number, company, brand, model, status FROM vehicles WHERE vehicle_number = 'STK-VERIFY-01';"
+   ```
+5. **Update Vehicle Record**:
+   ```bash
+   curl -s -i -X PUT http://localhost:8080/api/vehicles/<id> \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"vehicleNumber":"STK-VERIFY-01","company":"Stark Industries","type":"SUV","brand":"Tesla","model":"Model X Plaid","status":"MAINTENANCE"}'
+   ```
+6. **Verify Duplicate Rejection (409 Conflict)**:
+   ```bash
+   curl -s -i -X POST http://localhost:8080/api/vehicles \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"vehicleNumber":"STK-VERIFY-01","company":"Stark Logistics","type":"Van","brand":"Ford","model":"Transit","status":"ACTIVE"}'
+   ```
+   *Expected:* HTTP 409 Conflict with code `DUPLICATE_VEHICLE_NUMBER` and field error on `vehicleNumber`.
+7. **Delete Vehicle & Audit Absence in SQL**:
+   ```bash
+   curl -s -i -X DELETE http://localhost:8080/api/vehicles/<id> \
+     -H "Authorization: Bearer $TOKEN"
+   psql -U vms_user -d stark_vms_db -c "SELECT COUNT(*) FROM vehicles WHERE vehicle_number = 'STK-VERIFY-01';"
+   ```
+   *Expected:* HTTP 204 No Content; SQL count returns `0`.
 
 ---
 

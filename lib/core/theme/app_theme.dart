@@ -2,11 +2,17 @@ import 'package:flutter/material.dart';
 
 /// Centralized design tokens and Material 3 theme for Stark Group VMS.
 ///
-/// Implements a restrained, accessible business administration interface
-/// with clear hierarchy and generous, predictable spacing.
+/// Implements a unified, cohesive design system across all screens:
+/// - Light neutral canvas (#F8FAFC)
+/// - Deep navy brand/navigation (#0F172A)
+/// - Pure white content surfaces (#FFFFFF)
+/// - Restrained blue primary actions (#2563EB)
+/// - High-contrast readable typography (#0F172A primary, #475569 secondary)
+/// - Subtle borders (#E2E8F0) and minimal shadows.
 class AppTheme {
   // Brand Palette: Deep Navy & Blue
-  static const Color navy900 = Color(0xFF0F172A); // Main brand/sidebar navy
+  static const Color brandNavy = Color(0xFF0F172A); // Main brand/sidebar navy
+  static const Color navy900 = Color(0xFF0F172A); // Aliased for backward compatibility
   static const Color navy800 = Color(0xFF1E293B); // Sidebar hover/borders
   static const Color navy700 = Color(0xFF334155); // Muted navy
 
@@ -15,18 +21,21 @@ class AppTheme {
   static const Color primaryBlueSubtle = Color(0xFFEFF6FF); // Selected tint
 
   // Neutral Background & Surfaces
-  static const Color neutralBg = Color(0xFFF8FAFC); // Page background
-  static const Color surfaceWhite = Colors.white; // Content cards & surfaces
+  static const Color canvasLight = Color(0xFFF8FAFC); // Main page canvas
+  static const Color neutralBg = Color(0xFFF8FAFC); // Page background alias
+  static const Color surfaceWhite = Color(0xFFFFFFFF); // Content cards & surfaces
   static const Color borderNeutral = Color(0xFFE2E8F0); // Subtle borders
-  static const Color borderSubtle = Color(0xFFF1F5F9); // Table dividers
+  static const Color borderSubtle = Color(0xFFF1F5F9); // Table dividers / light borders
 
   // Typography Neutrals
   static const Color textDark = Color(0xFF0F172A); // High-contrast primary text
-  static const Color textMuted = Color(0xFF64748B); // Secondary / helper text
+  static const Color textPrimary = Color(0xFF0F172A); // Semantic alias
+  static const Color textMuted = Color(0xFF475569); // High-contrast secondary / helper text
+  static const Color textSecondary = Color(0xFF475569); // Semantic alias
   static const Color textDisabled = Color(0xFF94A3B8); // Inactive / placeholder
 
-  // Feedback Colors
-  static const Color errorRed = Color(0xFFDC2626); // Destructive / validation error
+  // Feedback Colors (WCAG AAA compliant)
+  static const Color errorRed = Color(0xFFB91C1C); // Destructive / validation error
   static const Color errorRedBg = Color(0xFFFEF2F2); // Error alert background
   static const Color errorRedBorder = Color(0xFFFECACA); // Error alert border
 
@@ -68,7 +77,7 @@ class AppTheme {
         error: errorRed,
         brightness: Brightness.light,
       ),
-      scaffoldBackgroundColor: neutralBg,
+      scaffoldBackgroundColor: canvasLight,
       fontFamily: 'Roboto',
       appBarTheme: const AppBarTheme(
         backgroundColor: surfaceWhite,

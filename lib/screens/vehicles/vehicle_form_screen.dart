@@ -5,19 +5,22 @@ import '../../core/utils/responsive.dart';
 import '../../data/mock_data.dart';
 import '../../data/vehicle_repository.dart';
 import '../../models/vehicle.dart';
+import '../../router/app_router.dart';
 import '../../widgets/app_shell.dart';
 import '../../widgets/confirmation_dialog.dart';
 
 /// Reusable form screen for both Registering a new vehicle and Editing an existing vehicle.
 class VehicleFormScreen extends StatefulWidget {
   final Vehicle? vehicleToEdit;
+  final int? vehicleId;
 
   const VehicleFormScreen({
     super.key,
     this.vehicleToEdit,
+    this.vehicleId,
   });
 
-  bool get isEditing => vehicleToEdit != null;
+  bool get isEditing => vehicleToEdit != null || vehicleId != null;
 
   @override
   State<VehicleFormScreen> createState() => _VehicleFormScreenState();
@@ -39,34 +42,108 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
   VehicleStatus _selectedStatus = VehicleStatus.active;
 
   bool _isSaving = false;
-  String? _duplicateNumberError;
+  bool _isLoadingRecord = false;
+  String? _loadRecordError;
+  Vehicle? _loadedVehicle;
+
+  final Map<String, String> _serverFieldErrors = {};
 
   // Track initial values to determine whether form is dirty
-  late final String _initialNumber;
-  late final String? _initialCompany;
-  late final String? _initialType;
-  late final String _initialBrand;
-  late final String _initialModel;
-  late final VehicleStatus _initialStatus;
+  String _initialNumber = '';
+  String? _initialCompany;
+  String? _initialType;
+  String _initialBrand = '';
+  String _initialModel = '';
+  VehicleStatus _initialStatus = VehicleStatus.active;
 
   @override
   void initState() {
     super.initState();
-    final v = widget.vehicleToEdit;
+    _numberController = TextEditingController();
+    _brandController = TextEditingController();
+    _modelController = TextEditingController();
 
-    _initialNumber = v?.vehicleNumber ?? '';
-    _initialCompany = v?.company ?? kDefaultCompanies.first;
-    _initialType = v?.type ?? kDefaultVehicleTypes.first;
-    _initialBrand = v?.brand ?? '';
-    _initialModel = v?.model ?? '';
-    _initialStatus = v?.status ?? VehicleStatus.active;
+    if (widget.vehicleToEdit != null) {
+      _initFromVehicle(widget.vehicleToEdit!);
+    } else if (widget.vehicleId != null) {
+      final cached = VehicleRepository.instance.getById(widget.vehicleId!);
+      if (cached != null) {
+        _initFromVehicle(cached);
+      } else {
+        _isLoadingRecord = true;
+        _initControllersEmpty();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _loadVehicleRecord(widget.vehicleId!);
+        });
+      }
+    } else {
+      _initControllersEmpty();
+    }
+  }
 
-    _numberController = TextEditingController(text: _initialNumber);
+  void _initControllersEmpty() {
+    _initialNumber = '';
+    _initialCompany = kDefaultCompanies.first;
+    _initialType = kDefaultVehicleTypes.first;
+    _initialBrand = '';
+    _initialModel = '';
+    _initialStatus = VehicleStatus.active;
+
+    _numberController.text = '';
     _selectedCompany = _initialCompany;
     _selectedType = _initialType;
-    _brandController = TextEditingController(text: _initialBrand);
-    _modelController = TextEditingController(text: _initialModel);
+    _brandController.text = '';
+    _modelController.text = '';
     _selectedStatus = _initialStatus;
+  }
+
+  void _initFromVehicle(Vehicle v) {
+    _loadedVehicle = v;
+    _initialNumber = v.vehicleNumber;
+    _initialCompany = v.company;
+    _initialType = v.type;
+    _initialBrand = v.brand;
+    _initialModel = v.model;
+    _initialStatus = v.status;
+
+    _numberController.text = _initialNumber;
+    _selectedCompany = _initialCompany;
+    _selectedType = _initialType;
+    _brandController.text = _initialBrand;
+    _modelController.text = _initialModel;
+    _selectedStatus = _initialStatus;
+  }
+
+  Future<void> _loadVehicleRecord(int id) async {
+    try {
+      final vehicle = await VehicleRepository.instance.fetchVehicleById(id);
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecord = false;
+        _loadRecordError = null;
+        _initFromVehicle(vehicle);
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecord = false;
+        _loadRecordError = e.isNotFound
+            ? 'Vehicle #$id was not found.'
+            : e.message;
+      });
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecord = false;
+        _loadRecordError = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingRecord = false;
+        _loadRecordError = 'Failed to load vehicle record: $e';
+      });
+    }
   }
 
   @override
@@ -81,6 +158,7 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
   }
 
   bool get _isDirty {
+    if (_isLoadingRecord || _loadRecordError != null) return false;
     return _numberController.text.trim() != _initialNumber.trim() ||
         _selectedCompany != _initialCompany ||
         _selectedType != _initialType ||
@@ -88,6 +166,9 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         _modelController.text.trim() != _initialModel.trim() ||
         _selectedStatus != _initialStatus;
   }
+
+  Vehicle? get _targetVehicle => widget.vehicleToEdit ?? _loadedVehicle;
+  int? get _targetVehicleId => _targetVehicle?.id ?? widget.vehicleId;
 
   Future<void> _handleCancel() async {
     if (_isDirty) {
@@ -103,7 +184,7 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
     if (_isSaving) return;
 
     setState(() {
-      _duplicateNumberError = null;
+      _serverFieldErrors.clear();
     });
 
     if (!_formKey.currentState!.validate()) {
@@ -112,16 +193,18 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
 
     final trimmedNumber = _numberController.text.trim();
     final repo = VehicleRepository.instance;
+    final activeId = _targetVehicleId;
 
+    // Early client advisory check to provide instant feedback
     final isDuplicate = repo.isVehicleNumberDuplicate(
       trimmedNumber,
-      excludeId: widget.vehicleToEdit?.id,
+      excludeId: activeId,
     );
 
     if (isDuplicate) {
       setState(() {
-        _duplicateNumberError =
-            'Vehicle Number "$trimmedNumber" is already registered. Vehicle numbers must be unique.';
+        _serverFieldErrors['vehicleNumber'] =
+            'A vehicle with Vehicle Number "$trimmedNumber" is already registered. A vehicle with this Vehicle Number already exists.';
       });
       _numberFocusNode.requestFocus();
       return;
@@ -130,7 +213,7 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
     setState(() => _isSaving = true);
 
     final vehicle = Vehicle(
-      id: widget.vehicleToEdit?.id ?? 0,
+      id: activeId ?? 0,
       vehicleNumber: trimmedNumber,
       company: _selectedCompany ?? kDefaultCompanies.first,
       type: _selectedType ?? kDefaultVehicleTypes.first,
@@ -141,7 +224,7 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
 
     try {
       final Vehicle result;
-      if (widget.isEditing) {
+      if (widget.isEditing && activeId != null && activeId > 0) {
         result = await repo.update(vehicle);
       } else {
         result = await repo.add(vehicle);
@@ -160,18 +243,49 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         ),
       );
 
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(result);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
         _isSaving = false;
         if (e.isDuplicateVehicleNumber) {
-          _duplicateNumberError = e.message;
+          _serverFieldErrors['vehicleNumber'] =
+              e.getFieldError('vehicleNumber') ??
+                  'A vehicle with this Vehicle Number already exists.';
           _numberFocusNode.requestFocus();
+        } else if (e.isValidationFailed && e.fieldErrors.isNotEmpty) {
+          for (final fe in e.fieldErrors) {
+            _serverFieldErrors[fe.field] = fe.message;
+          }
+          if (_serverFieldErrors.containsKey('vehicleNumber')) {
+            _numberFocusNode.requestFocus();
+          } else if (_serverFieldErrors.containsKey('brand')) {
+            _brandFocusNode.requestFocus();
+          } else if (_serverFieldErrors.containsKey('model')) {
+            _modelFocusNode.requestFocus();
+          }
         }
       });
 
-      if (!e.isDuplicateVehicleNumber) {
+      if (e.isNotFound) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Vehicle record is no longer available.',
+            ),
+            backgroundColor: AppTheme.errorRed,
+            behavior: SnackBarBehavior.floating,
+            action: SnackBarAction(
+              label: 'Fleet List',
+              textColor: Colors.white,
+              onPressed: () {
+                Navigator.of(context)
+                    .pushReplacementNamed(AppRouter.vehiclesRoute);
+              },
+            ),
+          ),
+        );
+      } else if (!e.isDuplicateVehicleNumber && !e.isValidationFailed) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(e.message),
@@ -207,6 +321,101 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
   Widget build(BuildContext context) {
     final title = widget.isEditing ? 'Edit Vehicle' : 'Register Vehicle';
     final isDesktop = Responsive.isDesktop(context);
+
+    if (_isLoadingRecord) {
+      return AppShell(
+        title: title,
+        showBackButton: true,
+        onBack: _handleCancel,
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: AppTheme.space16),
+              Text(
+                'Loading vehicle details...',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textDark,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_loadRecordError != null) {
+      return AppShell(
+        title: title,
+        showBackButton: true,
+        onBack: _handleCancel,
+        child: Center(
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(AppTheme.space32),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 480),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      size: 48,
+                      color: AppTheme.errorRed,
+                    ),
+                    const SizedBox(height: AppTheme.space16),
+                    const Text(
+                      'Vehicle Not Available',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textDark,
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.space8),
+                    Text(
+                      _loadRecordError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: AppTheme.space24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Back to Fleet List'),
+                        ),
+                        if (widget.vehicleId != null) ...[
+                          const SizedBox(width: AppTheme.space12),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _isLoadingRecord = true;
+                                _loadRecordError = null;
+                              });
+                              _loadVehicleRecord(widget.vehicleId!);
+                            },
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     return PopScope(
       canPop: !_isDirty,
@@ -266,8 +475,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         const SizedBox(height: 2),
         Text(
           widget.isEditing
-              ? 'Update existing fleet asset parameters and operational state.'
-              : 'Add a new vehicle record to the Stark Group fleet registry.',
+              ? 'Update vehicle details and status.'
+              : 'Add a new vehicle to the fleet registry.',
           style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
         ),
       ],
@@ -281,8 +490,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle(
-                '1. Vehicle Identity', 'Registration number and owning subsidiary'),
+            _buildSectionTitle('Vehicle Identity',
+                'Registration number and company'),
             const SizedBox(height: AppTheme.space16),
             if (isDesktop)
               Row(
@@ -311,8 +520,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle('2. Vehicle Details',
-                'Category, manufacturer brand, and model designation'),
+            _buildSectionTitle('Vehicle Details',
+                'Type, brand, and model'),
             const SizedBox(height: AppTheme.space16),
             if (isDesktop)
               Row(
@@ -345,8 +554,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionTitle(
-                '3. Operational State', 'Current deployment status within the fleet'),
+            _buildSectionTitle('Fleet Status',
+                'Current deployment status'),
             const SizedBox(height: AppTheme.space16),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 360),
@@ -386,7 +595,9 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         const Text(
           'Vehicle Number *',
           style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         TextFormField(
@@ -394,7 +605,7 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
           focusNode: _numberFocusNode,
           decoration: InputDecoration(
             hintText: 'e.g. STK-1001',
-            errorText: _duplicateNumberError,
+            errorText: _serverFieldErrors['vehicleNumber'],
           ),
           validator: (value) {
             final trimmed = value?.trim() ?? '';
@@ -407,8 +618,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
             return null;
           },
           onChanged: (_) {
-            if (_duplicateNumberError != null) {
-              setState(() => _duplicateNumberError = null);
+            if (_serverFieldErrors.containsKey('vehicleNumber')) {
+              setState(() => _serverFieldErrors.remove('vehicleNumber'));
             }
           },
         ),
@@ -430,13 +641,17 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         const Text(
           'Company *',
           style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         DropdownButtonFormField<String>(
           initialValue: _selectedCompany,
           isExpanded: true,
-          decoration: const InputDecoration(),
+          decoration: InputDecoration(
+            errorText: _serverFieldErrors['company'],
+          ),
           items: availableCompanies.map((c) {
             return DropdownMenuItem(
               value: c,
@@ -444,11 +659,19 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
             );
           }).toList(),
           onChanged: (val) {
-            if (val != null) setState(() => _selectedCompany = val);
+            if (val != null) {
+              setState(() {
+                _selectedCompany = val;
+                _serverFieldErrors.remove('company');
+              });
+            }
           },
           validator: (value) {
             if (value == null || value.trim().isEmpty) {
               return 'Company is required.';
+            }
+            if (value.trim().length > 120) {
+              return 'Company cannot exceed 120 characters.';
             }
             return null;
           },
@@ -470,13 +693,17 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         const Text(
           'Type *',
           style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         DropdownButtonFormField<String>(
           initialValue: _selectedType,
           isExpanded: true,
-          decoration: const InputDecoration(),
+          decoration: InputDecoration(
+            errorText: _serverFieldErrors['type'],
+          ),
           items: availableTypes.map((t) {
             return DropdownMenuItem(
               value: t,
@@ -484,11 +711,19 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
             );
           }).toList(),
           onChanged: (val) {
-            if (val != null) setState(() => _selectedType = val);
+            if (val != null) {
+              setState(() {
+                _selectedType = val;
+                _serverFieldErrors.remove('type');
+              });
+            }
           },
           validator: (value) {
             if (value == null || value.trim().isEmpty) {
               return 'Vehicle Type is required.';
+            }
+            if (value.trim().length > 60) {
+              return 'Vehicle Type cannot exceed 60 characters.';
             }
             return null;
           },
@@ -504,13 +739,18 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         const Text(
           'Brand *',
           style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         TextFormField(
           controller: _brandController,
           focusNode: _brandFocusNode,
-          decoration: const InputDecoration(hintText: 'e.g. Mercedes-Benz, Volvo'),
+          decoration: InputDecoration(
+            hintText: 'e.g. Mercedes-Benz, Volvo',
+            errorText: _serverFieldErrors['brand'],
+          ),
           validator: (value) {
             final trimmed = value?.trim() ?? '';
             if (trimmed.isEmpty) {
@@ -520,6 +760,11 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
               return 'Brand cannot exceed 80 characters.';
             }
             return null;
+          },
+          onChanged: (_) {
+            if (_serverFieldErrors.containsKey('brand')) {
+              setState(() => _serverFieldErrors.remove('brand'));
+            }
           },
         ),
       ],
@@ -533,13 +778,18 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         const Text(
           'Model *',
           style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         TextFormField(
           controller: _modelController,
           focusNode: _modelFocusNode,
-          decoration: const InputDecoration(hintText: 'e.g. Sprinter 2500, Model 3'),
+          decoration: InputDecoration(
+            hintText: 'e.g. Sprinter 2500, Model 3',
+            errorText: _serverFieldErrors['model'],
+          ),
           validator: (value) {
             final trimmed = value?.trim() ?? '';
             if (trimmed.isEmpty) {
@@ -549,6 +799,11 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
               return 'Model cannot exceed 120 characters.';
             }
             return null;
+          },
+          onChanged: (_) {
+            if (_serverFieldErrors.containsKey('model')) {
+              setState(() => _serverFieldErrors.remove('model'));
+            }
           },
         ),
       ],
@@ -562,13 +817,17 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
         const Text(
           'Status *',
           style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textDark),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textDark),
         ),
         const SizedBox(height: AppTheme.space4),
         DropdownButtonFormField<VehicleStatus>(
           initialValue: _selectedStatus,
           isExpanded: true,
-          decoration: const InputDecoration(),
+          decoration: InputDecoration(
+            errorText: _serverFieldErrors['status'],
+          ),
           items: VehicleStatus.values.map((s) {
             return DropdownMenuItem(
               value: s,
@@ -577,8 +836,8 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
                   Container(
                     width: 7,
                     height: 7,
-                    decoration:
-                        BoxDecoration(color: s.dotColor, shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                        color: s.dotColor, shape: BoxShape.circle),
                   ),
                   const SizedBox(width: 8),
                   Text(s.label, style: const TextStyle(fontSize: 14)),
@@ -587,7 +846,12 @@ class _VehicleFormScreenState extends State<VehicleFormScreen> {
             );
           }).toList(),
           onChanged: (val) {
-            if (val != null) setState(() => _selectedStatus = val);
+            if (val != null) {
+              setState(() {
+                _selectedStatus = val;
+                _serverFieldErrors.remove('status');
+              });
+            }
           },
         ),
       ],

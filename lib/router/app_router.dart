@@ -3,21 +3,29 @@ import '../core/theme/app_theme.dart';
 import '../data/auth/auth_service.dart';
 import '../models/vehicle.dart';
 import '../screens/auth/login_screen.dart';
+import '../screens/auth/register_screen.dart';
+import '../screens/home/home_screen.dart';
 import '../screens/vehicles/vehicle_form_screen.dart';
 import '../screens/vehicles/vehicle_list_screen.dart';
 import '../widgets/app_shell.dart';
 
 /// Centralized route definitions and page generator for Stark Group VMS.
 class AppRouter {
+  static const String homeRoute = '/';
   static const String loginRoute = '/login';
+  static const String registerRoute = '/register';
   static const String vehiclesRoute = '/vehicles';
   static const String vehicleNewRoute = '/vehicles/new';
   static const String vehicleEditRoute = '/vehicles/edit';
 
   static Route<dynamic> generateRoute(RouteSettings settings) {
+    // Public routes accessible without authentication
+    final isPublic = settings.name == homeRoute ||
+        settings.name == loginRoute ||
+        settings.name == registerRoute;
+
     // Route guard: require active in-memory session for all protected routes
-    final isProtected = settings.name != loginRoute;
-    if (isProtected && !AuthService.instance.isAuthenticated) {
+    if (!isPublic && !AuthService.instance.isAuthenticated) {
       return MaterialPageRoute(
         settings: const RouteSettings(name: loginRoute),
         builder: (_) => const LoginScreen(),
@@ -25,14 +33,25 @@ class AppRouter {
     }
 
     switch (settings.name) {
+      case homeRoute:
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (_) => const HomeScreen(),
+        );
+
       case loginRoute:
         return MaterialPageRoute(
           settings: settings,
           builder: (_) => const LoginScreen(),
         );
 
+      case registerRoute:
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (_) => const RegisterScreen(),
+        );
+
       case vehiclesRoute:
-      case '/':
         return MaterialPageRoute(
           settings: settings,
           builder: (_) => const VehicleListScreen(),
@@ -45,22 +64,43 @@ class AppRouter {
         );
 
       case vehicleEditRoute:
-        final vehicle = settings.arguments as Vehicle?;
-        if (vehicle == null) {
+        final args = settings.arguments;
+        if (args is Vehicle) {
           return MaterialPageRoute(
             settings: settings,
-            builder: (_) => const _VehicleNotFoundScreen(),
+            builder: (_) => VehicleFormScreen(vehicleToEdit: args),
           );
+        } else if (args is int) {
+          return MaterialPageRoute(
+            settings: settings,
+            builder: (_) => VehicleFormScreen(vehicleId: args),
+          );
+        } else if (args is Map && args['id'] != null) {
+          final id = int.tryParse(args['id'].toString());
+          if (id != null) {
+            return MaterialPageRoute(
+              settings: settings,
+              builder: (_) => VehicleFormScreen(vehicleId: id),
+            );
+          }
+        } else if (args is String) {
+          final id = int.tryParse(args);
+          if (id != null) {
+            return MaterialPageRoute(
+              settings: settings,
+              builder: (_) => VehicleFormScreen(vehicleId: id),
+            );
+          }
         }
         return MaterialPageRoute(
           settings: settings,
-          builder: (_) => VehicleFormScreen(vehicleToEdit: vehicle),
+          builder: (_) => const _VehicleNotFoundScreen(),
         );
 
       default:
         return MaterialPageRoute(
           settings: settings,
-          builder: (_) => const LoginScreen(),
+          builder: (_) => const HomeScreen(),
         );
     }
   }

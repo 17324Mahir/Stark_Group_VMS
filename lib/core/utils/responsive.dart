@@ -51,4 +51,3 @@ class Responsive extends StatelessWidget {
     }
   }
 }
-

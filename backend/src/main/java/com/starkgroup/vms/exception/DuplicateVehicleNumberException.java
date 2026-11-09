@@ -10,4 +10,3 @@ public class DuplicateVehicleNumberException extends RuntimeException {
         super(message, cause);
     }
 }
-

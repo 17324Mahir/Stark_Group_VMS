@@ -8,14 +8,17 @@ import '../../core/errors/api_exception.dart';
 import '../../models/auth_session.dart';
 import '../../models/auth_user.dart';
 import '../vehicle_repository.dart';
+import 'session_storage.dart';
 
 /// Centralized service managing client-side authentication, session state, and JWT bearer tokens.
 ///
-/// Security constraints:
-/// - Tokens and session data are stored exclusively in memory.
-/// - Never saved to localStorage, sessionStorage, or SharedPreferences.
-/// - Reloading the browser page resets in-memory state and returns to login.
-/// - Signing out clears session tokens and flushes private vehicle records from cache.
+/// Session persistence:
+/// - On Flutter Web, tokens are persisted to `sessionStorage` (tab-scoped) so that
+///   page reloads do not require re-authentication.
+/// - `sessionStorage` is automatically cleared when the browser tab is closed.
+/// - On non-web platforms and in tests, a no-op stub is used (pure in-memory).
+/// - Signing out clears session tokens from both memory and `sessionStorage`,
+///   and flushes private vehicle records from cache.
 class AuthService {
   static AuthService _instance = AuthService();
   static AuthService get instance => _instance;
@@ -33,7 +36,67 @@ class AuthService {
     }
   }
 
-  AuthService();
+  AuthService() {
+    _restoreSession();
+  }
+
+  /// Attempts to restore a previously persisted session from sessionStorage (web only).
+  void _restoreSession() {
+    try {
+      final storage = SessionStorage.instance;
+      final token = storage.read('access_token');
+      final email = storage.read('email');
+      final expiresAtStr = storage.read('expires_at');
+
+      if (token == null || token.isEmpty || email == null || expiresAtStr == null) return;
+
+      final expiresAt = DateTime.tryParse(expiresAtStr);
+      if (expiresAt == null || DateTime.now().isAfter(expiresAt)) {
+        // Token expired — clear stale data
+        storage.clear();
+        return;
+      }
+
+      final tokenType = storage.read('token_type') ?? 'Bearer';
+      final expiresIn = int.tryParse(storage.read('expires_in') ?? '') ?? 900;
+      final sessionId = int.tryParse(storage.read('session_id') ?? '') ?? 1;
+
+      _sessionCounter = sessionId;
+      _currentSession = AuthSession(
+        accessToken: token,
+        tokenType: tokenType,
+        expiresIn: expiresIn,
+        expiresAt: expiresAt,
+        user: AuthUser(email: email),
+        sessionId: sessionId,
+      );
+      sessionNotifier.value = _currentSession;
+    } catch (_) {
+      // Gracefully degrade — session restore is best-effort
+    }
+  }
+
+  /// Persists the current session to sessionStorage so it survives page reloads.
+  void _persistSession(AuthSession session) {
+    try {
+      final storage = SessionStorage.instance;
+      storage.write('access_token', session.accessToken);
+      storage.write('token_type', session.tokenType);
+      storage.write('expires_in', session.expiresIn.toString());
+      storage.write('expires_at', session.expiresAt.toIso8601String());
+      storage.write('email', session.user.email);
+      storage.write('session_id', session.sessionId.toString());
+    } catch (_) {
+      // Best-effort persistence; in-memory session still works
+    }
+  }
+
+  /// Clears persisted session data from sessionStorage.
+  void _clearPersistedSession() {
+    try {
+      SessionStorage.instance.clear();
+    } catch (_) {}
+  }
 
   @visibleForTesting
   void setAuthenticatedForTesting({String email = 'tester@starkgroup.test', String token = 'fake-test-jwt'}) {
@@ -72,12 +135,37 @@ class AuthService {
 
   String? get currentEmail => currentSession?.user.email;
 
+  Timer? _keepAliveTimer;
+
+  /// Starts a periodic background heartbeat (every 5 minutes) to keep the backend warm
+  /// while the web app is open in a browser tab.
+  void startKeepAlive() {
+    _keepAliveTimer?.cancel();
+    unawaited(warmUpBackend());
+    _keepAliveTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      unawaited(warmUpBackend());
+    });
+  }
+
+  /// Preemptively pings the cloud backend to wake it up from idle sleep.
+  Future<void> warmUpBackend() async {
+    try {
+      final client = http.Client();
+      await client
+          .get(ApiConfig.baseUri.replace(path: '/api'))
+          .timeout(const Duration(seconds: 45));
+      client.close();
+    } catch (_) {
+      // Best-effort warm up; errors are ignored
+    }
+  }
+
   /// Authenticates against `POST /api/auth/login`.
   Future<AuthSession> login(
     String email,
     String password, {
     http.Client? client,
-    Duration timeout = const Duration(seconds: 10),
+    Duration timeout = const Duration(seconds: 45),
   }) async {
     final httpClient = client ?? http.Client();
     final isCustomClient = client != null;
@@ -118,9 +206,11 @@ class AuthService {
           sessionId: ++_sessionCounter,
         );
 
+        VehicleRepository.instance.clearCache();
         _currentSession = session;
         sessionExpiredMessage.value = null;
         sessionNotifier.value = session;
+        _persistSession(session);
         return session;
       }
 
@@ -128,7 +218,7 @@ class AuthService {
       throw _parseLoginError(response);
     } on TimeoutException catch (e) {
       throw NetworkException(
-        'Connection timed out while attempting to sign in. Please verify the backend is running.',
+        'The server is taking longer than usual to respond (cloud service may be waking up from idle). Please wait a moment and try again.',
         e,
       );
     } on SocketException catch (e) {
@@ -148,6 +238,134 @@ class AuthService {
     }
   }
 
+  /// Registers a new user account against `POST /api/auth/register`.
+  Future<AuthSession> register(
+    String name,
+    String email,
+    String password, {
+    http.Client? client,
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    final httpClient = client ?? http.Client();
+    final isCustomClient = client != null;
+
+    try {
+      final response = await httpClient
+          .post(
+            ApiConfig.authRegisterUri,
+            headers: const {
+              'Content-Type': 'application/json; charset=UTF-8',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({
+              'name': name.trim(),
+              'email': email.trim(),
+              'password': password.trim(),
+            }),
+          )
+          .timeout(timeout);
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException('Expected JSON object in register response.');
+        }
+
+        final accessToken = decoded['accessToken'] as String? ?? '';
+        final tokenType = decoded['tokenType'] as String? ?? 'Bearer';
+        final expiresIn = (decoded['expiresIn'] as num?)?.toInt() ?? 900;
+        final userMap = decoded['user'] as Map<String, dynamic>? ?? {};
+        final user = AuthUser.fromJson(userMap);
+
+        final session = AuthSession(
+          accessToken: accessToken,
+          tokenType: tokenType,
+          expiresIn: expiresIn,
+          expiresAt: DateTime.now().add(Duration(seconds: expiresIn)),
+          user: user,
+          sessionId: ++_sessionCounter,
+        );
+
+        VehicleRepository.instance.clearCache();
+        _currentSession = session;
+        sessionExpiredMessage.value = null;
+        sessionNotifier.value = session;
+        _persistSession(session);
+        return session;
+      }
+
+      throw _parseRegisterError(response);
+    } on TimeoutException catch (e) {
+      throw NetworkException(
+        'The server is taking longer than usual to respond (cloud service may be waking up from idle). Please wait a moment and try again.',
+        e,
+      );
+    } on SocketException catch (e) {
+      throw NetworkException(
+        'Unable to connect to the registration service. Please check your network connection.',
+        e,
+      );
+    } on http.ClientException catch (e) {
+      throw NetworkException(
+        'Network error during registration: ${e.message}',
+        e,
+      );
+    } finally {
+      if (!isCustomClient) {
+        httpClient.close();
+      }
+    }
+  }
+
+  ApiException _parseRegisterError(http.Response response) {
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        final code = decoded['code'] as String? ?? 'HTTP_${response.statusCode}';
+        final message = decoded['message'] as String? ?? 'Registration failed.';
+        return ApiException(
+          statusCode: (decoded['status'] as num?)?.toInt() ?? response.statusCode,
+          code: code,
+          message: message,
+          path: decoded['path'] as String?,
+        );
+      }
+    } catch (_) {}
+
+    return ApiException(
+      statusCode: response.statusCode,
+      code: 'HTTP_${response.statusCode}',
+      message: 'Registration failed with status code ${response.statusCode}.',
+    );
+  }
+
+  /// Checks whether an account exists based strictly on email address.
+  Future<bool> checkEmailExists(String email, {http.Client? client}) async {
+    final httpClient = client ?? http.Client();
+    final isCustomClient = client != null;
+
+    try {
+      final response = await httpClient
+          .get(
+            ApiConfig.authCheckEmailUri(email),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          return decoded['exists'] as bool? ?? false;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    } finally {
+      if (!isCustomClient) httpClient.close();
+    }
+  }
+
   /// Centrally handles 401 Unauthorized responses emitted by protected API endpoints.
   /// Prevents race conditions from older expired requests clearing a newer active session.
   void handleUnauthorized({int? forSessionId, String? reason}) {
@@ -161,13 +379,15 @@ class AuthService {
     signOut(reason: reason ?? 'Session expired. Please sign in again.');
   }
 
-  /// Clears in-memory session tokens, notifies listeners, and wipes private cached fleet data.
+  /// Clears in-memory session tokens, persisted session storage, notifies listeners,
+  /// and wipes private cached fleet data.
   void signOut({String? reason}) {
     _currentSession = null;
     sessionNotifier.value = null;
     if (reason != null) {
       sessionExpiredMessage.value = reason;
     }
+    _clearPersistedSession();
     VehicleRepository.instance.clearCache();
   }
 

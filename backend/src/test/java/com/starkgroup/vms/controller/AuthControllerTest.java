@@ -111,4 +111,43 @@ class AuthControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code", is("VALIDATION_FAILED")));
     }
+
+    @Test
+    @DisplayName("POST /api/auth/register with valid payload returns 201 Created and JWT token")
+    void register_withValidPayload_returns201() throws Exception {
+        com.starkgroup.vms.dto.RegisterRequest request =
+                new com.starkgroup.vms.dto.RegisterRequest("Tony Stark", "tony@starkgroup.test", "IronManSecret@123");
+        LoginResponse response = new LoginResponse(
+                "mock.registered.token",
+                "Bearer",
+                900L,
+                new UserSummaryDto("tony@starkgroup.test")
+        );
+
+        when(authService.register(any(com.starkgroup.vms.dto.RegisterRequest.class))).thenReturn(response);
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Cache-Control", containsString("no-store")))
+                .andExpect(jsonPath("$.accessToken", is("mock.registered.token")))
+                .andExpect(jsonPath("$.user.email", is("tony@starkgroup.test")));
+    }
+
+    @Test
+    @DisplayName("GET /api/auth/check-email returns 200 with availability status")
+    void checkEmail_returns200WithAvailability() throws Exception {
+        com.starkgroup.vms.dto.CheckEmailResponse response =
+                new com.starkgroup.vms.dto.CheckEmailResponse("tony@starkgroup.test", true, "An account with this email address already exists.");
+
+        when(authService.checkEmail("tony@starkgroup.test")).thenReturn(response);
+
+        mockMvc.perform(get("/api/auth/check-email")
+                        .param("email", "tony@starkgroup.test"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", containsString("no-store")))
+                .andExpect(jsonPath("$.exists", is(true)))
+                .andExpect(jsonPath("$.email", is("tony@starkgroup.test")));
+    }
 }

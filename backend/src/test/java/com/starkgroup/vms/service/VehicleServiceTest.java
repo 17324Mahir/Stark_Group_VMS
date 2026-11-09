@@ -42,10 +42,11 @@ class VehicleServiceTest {
     // --- Create Vehicle Tests ---
 
     @Test
-    @DisplayName("Valid input creates a vehicle with normalized vehicle number and returns response DTO")
-    void createVehicle_withValidInput_createsVehicleAndReturnsDto() {
+    @DisplayName("Duplicate Vehicle Number is rejected by business layer before persistence")
+    void createVehicle_whenVehicleNumberAlreadyExists_throwsDuplicateVehicleNumberException() {
+        // Arrange
         CreateVehicleRequest request = new CreateVehicleRequest(
-                "  sg-1001  ",
+                "STK-9001",
                 "Stark Industries",
                 "Sedan",
                 "Tesla",
@@ -53,18 +54,51 @@ class VehicleServiceTest {
                 VehicleStatus.ACTIVE
         );
 
-        when(vehicleRepository.existsByVehicleNumber("SG-1001")).thenReturn(false);
+        when(vehicleRepository.existsByVehicleNumber("STK-9001")).thenReturn(true);
+
+        // Act & Assert
+        DuplicateVehicleNumberException ex = assertThrows(DuplicateVehicleNumberException.class,
+                () -> vehicleService.createVehicle(request));
+
+        assertEquals("A vehicle with this Vehicle Number already exists.", ex.getMessage());
+        verify(vehicleRepository, never()).saveAndFlush(any());
+        verify(vehicleRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("New unique Vehicle Number is accepted and persisted with generated ID")
+    void createVehicle_whenVehicleNumberIsNew_createsVehicle() {
+        // Arrange
+        CreateVehicleRequest request = new CreateVehicleRequest(
+                "STK-9002",
+                "Stark Industries",
+                "Sedan",
+                "Tesla",
+                "Model S",
+                VehicleStatus.ACTIVE
+        );
+
+        when(vehicleRepository.existsByVehicleNumber("STK-9002")).thenReturn(false);
         when(vehicleRepository.saveAndFlush(any(Vehicle.class))).thenAnswer(invocation -> {
             Vehicle toSave = invocation.getArgument(0);
-            return new Vehicle(1L, toSave.getVehicleNumber(), toSave.getCompany(),
-                    toSave.getType(), toSave.getBrand(), toSave.getModel(), toSave.getStatus());
+            return new Vehicle(
+                    101L,
+                    toSave.getVehicleNumber(),
+                    toSave.getCompany(),
+                    toSave.getType(),
+                    toSave.getBrand(),
+                    toSave.getModel(),
+                    toSave.getStatus()
+            );
         });
 
+        // Act
         VehicleResponse response = vehicleService.createVehicle(request);
 
+        // Assert
         assertNotNull(response);
-        assertEquals(1L, response.id());
-        assertEquals("SG-1001", response.vehicleNumber());
+        assertEquals(101L, response.id());
+        assertEquals("STK-9002", response.vehicleNumber());
         assertEquals("Stark Industries", response.company());
         assertEquals("Sedan", response.type());
         assertEquals("Tesla", response.brand());
@@ -72,15 +106,17 @@ class VehicleServiceTest {
         assertEquals(VehicleStatus.ACTIVE, response.status());
 
         ArgumentCaptor<Vehicle> captor = ArgumentCaptor.forClass(Vehicle.class);
-        verify(vehicleRepository).saveAndFlush(captor.capture());
-        assertEquals("SG-1001", captor.getValue().getVehicleNumber());
+        verify(vehicleRepository, times(1)).saveAndFlush(captor.capture());
+        assertEquals("STK-9002", captor.getValue().getVehicleNumber());
+        assertEquals("Stark Industries", captor.getValue().getCompany());
     }
 
     @Test
-    @DisplayName("Existing Vehicle Number is rejected by business layer before persistence")
-    void createVehicle_withDuplicateVehicleNumber_throwsDuplicateVehicleNumberException() {
+    @DisplayName("Vehicle Number with leading/trailing whitespace and mixed case is normalized and rejected as duplicate")
+    void createVehicle_whenVehicleNumberHasWhitespaceAndMixedCase_normalizesAndRejectsDuplicate() {
+        // Arrange
         CreateVehicleRequest request = new CreateVehicleRequest(
-                "SG-1001",
+                "  stk-9001  ",
                 "Stark Industries",
                 "Sedan",
                 "Tesla",
@@ -88,32 +124,16 @@ class VehicleServiceTest {
                 VehicleStatus.ACTIVE
         );
 
-        when(vehicleRepository.existsByVehicleNumber("SG-1001")).thenReturn(true);
+        when(vehicleRepository.existsByVehicleNumber("STK-9001")).thenReturn(true);
 
+        // Act & Assert
         DuplicateVehicleNumberException ex = assertThrows(DuplicateVehicleNumberException.class,
                 () -> vehicleService.createVehicle(request));
 
         assertEquals("A vehicle with this Vehicle Number already exists.", ex.getMessage());
+        verify(vehicleRepository).existsByVehicleNumber("STK-9001");
         verify(vehicleRepository, never()).saveAndFlush(any());
-    }
-
-    @Test
-    @DisplayName("Case and surrounding whitespace variations are normalized and rejected as duplicates")
-    void createVehicle_withWhitespaceAndCaseVariation_normalizesAndRejectsAsDuplicate() {
-        CreateVehicleRequest request = new CreateVehicleRequest(
-                "  sg-1001 ",
-                "Stark Industries",
-                "Sedan",
-                "Tesla",
-                "Model S",
-                VehicleStatus.ACTIVE
-        );
-
-        when(vehicleRepository.existsByVehicleNumber("SG-1001")).thenReturn(true);
-
-        assertThrows(DuplicateVehicleNumberException.class, () -> vehicleService.createVehicle(request));
-        verify(vehicleRepository).existsByVehicleNumber("SG-1001");
-        verify(vehicleRepository, never()).saveAndFlush(any());
+        verify(vehicleRepository, never()).save(any());
     }
 
     @Test
@@ -310,6 +330,27 @@ class VehicleServiceTest {
         assertEquals(2, responses.size());
         assertEquals("SG-1001", responses.get(0).vehicleNumber());
         assertEquals("SG-1002", responses.get(1).vehicleNumber());
+    }
+
+    @Test
+    @DisplayName("Paginating vehicles returns page of mapped DTOs")
+    void getVehicles_returnsPageOfMappedDtos() {
+        List<Vehicle> list = List.of(
+                new Vehicle(1L, "SG-1001", "Stark Industries", "Sedan", "Tesla", "Model S", VehicleStatus.ACTIVE),
+                new Vehicle(2L, "SG-1002", "Stark Logistics", "Van", "Ford", "Transit", VehicleStatus.MAINTENANCE)
+        );
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, 10);
+        org.springframework.data.domain.Page<Vehicle> page = new org.springframework.data.domain.PageImpl<>(list, pageable, 2);
+
+        when(vehicleRepository.findAll(pageable)).thenReturn(page);
+
+        org.springframework.data.domain.Page<VehicleResponse> responses = vehicleService.getVehicles(pageable);
+
+        assertEquals(2, responses.getContent().size());
+        assertEquals(0, responses.getNumber());
+        assertEquals(10, responses.getSize());
+        assertEquals(2, responses.getTotalElements());
+        assertEquals("SG-1001", responses.getContent().get(0).vehicleNumber());
     }
 
     @Test

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/errors/api_exception.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/auth/auth_service.dart';
@@ -24,6 +25,20 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   bool _isSubmitting = false;
   String? _authErrorMessage;
+  bool _initializedFromArgs = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_initializedFromArgs) {
+      _initializedFromArgs = true;
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is String && args.isNotEmpty && _emailController.text.isEmpty) {
+        _emailController.text = args;
+        _passwordFocusNode.requestFocus();
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -57,6 +72,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
+      TextInput.finishAutofillContext();
       _passwordController.clear();
       setState(() => _isSubmitting = false);
 
@@ -107,9 +123,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         ? AppTheme.space20
                         : AppTheme.space32,
                   ),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
+                  child: AutofillGroup(
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -138,11 +155,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         _buildPasswordField(),
                         const SizedBox(height: AppTheme.space24),
                         _buildSubmitButton(),
-                        const SizedBox(height: AppTheme.space24),
-                        _buildSecurityNotice(),
+                        const SizedBox(height: AppTheme.space16),
+                        _buildRegisterLink(),
                       ],
                     ),
                   ),
+                ),
                 ),
               ),
             ),
@@ -204,7 +222,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: AppTheme.space4),
         const Text(
-          'Administrative console for managing fleet operations and vehicle records.',
+          'Enter your credentials to access the fleet registry.',
           style: TextStyle(
             fontSize: 13,
             color: AppTheme.textMuted,
@@ -295,11 +313,12 @@ class _LoginScreenState extends State<LoginScreen> {
         TextFormField(
           controller: _emailController,
           enabled: !_isSubmitting,
+          autofillHints: const [AutofillHints.email, AutofillHints.username],
           keyboardType: TextInputType.emailAddress,
           textInputAction: TextInputAction.next,
           onFieldSubmitted: (_) => _passwordFocusNode.requestFocus(),
           decoration: const InputDecoration(
-            hintText: 'user@starkgroup.test',
+            hintText: 'user@example.com',
           ),
           validator: (value) {
             final trimmed = value?.trim() ?? '';
@@ -335,6 +354,7 @@ class _LoginScreenState extends State<LoginScreen> {
           focusNode: _passwordFocusNode,
           enabled: !_isSubmitting,
           obscureText: _obscurePassword,
+          autofillHints: const [AutofillHints.password],
           textInputAction: TextInputAction.done,
           onFieldSubmitted: (_) => _handleSubmit(),
           decoration: InputDecoration(
@@ -376,17 +396,37 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildSecurityNotice() {
-    return const Center(
-      child: Text(
-        'Protected by Spring Security · Signed JWT Bearer Authentication\nTokens are stored in memory only and expire after 15 minutes',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: 11,
-          color: AppTheme.textMuted,
-          height: 1.4,
+  Widget _buildRegisterLink() {
+    return Column(
+      children: [
+        Wrap(
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Text(
+              "Don't have an account? ",
+              style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
+            ),
+            TextButton(
+              onPressed: () {
+                final email = _emailController.text.trim();
+                Navigator.of(context).pushReplacementNamed(
+                  AppRouter.registerRoute,
+                  arguments: email.isNotEmpty ? email : null,
+                );
+              },
+              child: const Text('Register here', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         ),
-      ),
+        TextButton.icon(
+          onPressed: () {
+            Navigator.of(context).pushReplacementNamed(AppRouter.homeRoute);
+          },
+          icon: const Icon(Icons.arrow_back, size: 14),
+          label: const Text('Return to Home', style: TextStyle(fontSize: 12)),
+        ),
+      ],
     );
   }
 }

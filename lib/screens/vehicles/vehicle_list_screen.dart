@@ -32,6 +32,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
   int _currentPage = 1;
   static const int _pageSize = 10;
 
+  final Set<int> _deletingIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +62,23 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
       _statusFilter != null ||
       (_companyFilter != null && _companyFilter != 'All Companies');
 
+  bool _matchesActiveFilters(Vehicle v) {
+    if (_statusFilter != null && v.status != _statusFilter) return false;
+    if (_companyFilter != null &&
+        _companyFilter != 'All Companies' &&
+        v.company != _companyFilter) {
+      return false;
+    }
+    final q = _searchController.text.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      return v.vehicleNumber.toLowerCase().contains(q) ||
+          v.company.toLowerCase().contains(q) ||
+          v.brand.toLowerCase().contains(q) ||
+          v.model.toLowerCase().contains(q);
+    }
+    return true;
+  }
+
   void _clearFilters() {
     setState(() {
       _searchController.clear();
@@ -82,6 +101,8 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
   }
 
   Future<void> _handleDelete(Vehicle vehicle) async {
+    if (_deletingIds.contains(vehicle.id)) return;
+
     final confirmed = await ConfirmationDialog.showDelete(
       context,
       vehicleNumber: vehicle.vehicleNumber,
@@ -89,6 +110,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     );
 
     if (confirmed && mounted) {
+      setState(() => _deletingIds.add(vehicle.id));
       try {
         await VehicleRepository.instance.delete(vehicle.id);
         if (!mounted) return;
@@ -99,20 +121,48 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             behavior: SnackBarBehavior.floating,
           ),
         );
-      } catch (e) {
+      } on ApiException catch (e) {
         if (!mounted) return;
-        final errorMsg = e is ApiException
-            ? e.message
-            : (e is NetworkException
-                ? e.message
-                : 'Failed to delete vehicle: $e');
+        if (e.isNotFound) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  'Vehicle ${vehicle.vehicleNumber} was already removed or is unavailable.'),
+              backgroundColor: AppTheme.statusMaintenanceText,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.message),
+              backgroundColor: AppTheme.errorRed,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } on NetworkException catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(errorMsg),
+            content: Text(e.message),
             backgroundColor: AppTheme.errorRed,
             behavior: SnackBarBehavior.floating,
           ),
         );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete vehicle: $e'),
+            backgroundColor: AppTheme.errorRed,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } finally {
+        if (mounted) {
+          setState(() => _deletingIds.remove(vehicle.id));
+        }
       }
     }
   }
@@ -150,8 +200,14 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
         return AppShell(
           title: 'Vehicles',
           primaryAction: ElevatedButton.icon(
-            onPressed: () {
-              Navigator.of(context).pushNamed(AppRouter.vehicleNewRoute);
+            onPressed: () async {
+              final result = await Navigator.of(context)
+                  .pushNamed(AppRouter.vehicleNewRoute);
+              if (result is Vehicle && mounted) {
+                if (!_matchesActiveFilters(result)) {
+                  _clearFilters();
+                }
+              }
             },
             icon: const Icon(Icons.add, size: 18),
             label: Text(isDesktop ? 'Register vehicle' : 'Register'),
@@ -220,7 +276,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
               ),
               SizedBox(height: 2),
               Text(
-                'Manage and monitor registered fleet vehicles across all Stark Group companies.',
+                'Manage and monitor registered fleet vehicles.',
                 style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
               ),
             ],
@@ -254,7 +310,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.refresh, size: 18),
-              tooltip: 'Refresh fleet from database',
+              tooltip: 'Refresh',
               onPressed: isLoading ? null : () => _loadVehicles(silent: true),
             ),
           ],
@@ -267,9 +323,9 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFFEF2F2), // Red 50
+        color: AppTheme.errorRedBg,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        border: Border.all(color: const Color(0xFFFECACA)), // Red 200
+        border: Border.all(color: AppTheme.errorRedBorder),
       ),
       child: Row(
         children: [
@@ -470,7 +526,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             ),
             SizedBox(height: AppTheme.space4),
             Text(
-              'Connecting to Spring Boot backend database.',
+              'Please wait a moment.',
               style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
             ),
           ],
@@ -545,7 +601,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
   TableRow _buildTableHeaderRow() {
     return TableRow(
       decoration: const BoxDecoration(
-        color: Color(0xFFF8FAFC),
+        color: AppTheme.canvasLight,
         border:
             Border(bottom: BorderSide(color: AppTheme.borderNeutral, width: 1)),
       ),
@@ -632,7 +688,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: AppTheme.borderSubtle,
                 borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 border: Border.all(color: AppTheme.borderNeutral),
               ),
@@ -703,23 +759,40 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                 padding: const EdgeInsets.all(4),
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 splashRadius: 18,
-                onPressed: () {
-                  Navigator.of(context).pushNamed(
-                    AppRouter.vehicleEditRoute,
-                    arguments: vehicle,
-                  );
-                },
+                onPressed: _deletingIds.contains(vehicle.id)
+                    ? null
+                    : () async {
+                        final result = await Navigator.of(context).pushNamed(
+                          AppRouter.vehicleEditRoute,
+                          arguments: vehicle,
+                        );
+                        if (result is Vehicle && mounted) {
+                          if (!_matchesActiveFilters(result)) {
+                            _clearFilters();
+                          }
+                        }
+                      },
               ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 18),
-                tooltip: 'Delete vehicle ${vehicle.vehicleNumber}',
-                color: AppTheme.errorRed,
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.all(4),
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                splashRadius: 18,
-                onPressed: () => _handleDelete(vehicle),
-              ),
+              _deletingIds.contains(vehicle.id)
+                  ? const Padding(
+                      padding: EdgeInsets.all(7),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      tooltip: 'Delete vehicle ${vehicle.vehicleNumber}',
+                      color: AppTheme.errorRed,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.all(4),
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      splashRadius: 18,
+                      onPressed: () => _handleDelete(vehicle),
+                    ),
             ],
           ),
         ),
@@ -744,7 +817,7 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                       padding:
                           const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F5F9),
+                        color: AppTheme.borderSubtle,
                         borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                         border: Border.all(color: AppTheme.borderNeutral),
                       ),
@@ -780,23 +853,40 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pushNamed(
-                          AppRouter.vehicleEditRoute,
-                          arguments: vehicle,
-                        );
-                      },
+                      onPressed: _deletingIds.contains(vehicle.id)
+                          ? null
+                          : () async {
+                              final result = await Navigator.of(context).pushNamed(
+                                AppRouter.vehicleEditRoute,
+                                arguments: vehicle,
+                              );
+                              if (result is Vehicle && mounted) {
+                                if (!_matchesActiveFilters(result)) {
+                                  _clearFilters();
+                                }
+                              }
+                            },
                       icon: const Icon(Icons.edit_outlined, size: 16),
                       label: const Text('Edit'),
                     ),
                     const SizedBox(width: AppTheme.space8),
-                    TextButton.icon(
-                      onPressed: () => _handleDelete(vehicle),
-                      icon: const Icon(Icons.delete_outline,
-                          size: 16, color: AppTheme.errorRed),
-                      label: const Text('Delete',
-                          style: TextStyle(color: AppTheme.errorRed)),
-                    ),
+                    _deletingIds.contains(vehicle.id)
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : TextButton.icon(
+                            onPressed: () => _handleDelete(vehicle),
+                            icon: const Icon(Icons.delete_outline,
+                                size: 16, color: AppTheme.errorRed),
+                            label: const Text('Delete',
+                                style: TextStyle(color: AppTheme.errorRed)),
+                          ),
                   ],
                 ),
               ],
@@ -899,8 +989,14 @@ class _VehicleListScreenState extends State<VehicleListScreen> {
             ),
             const SizedBox(height: AppTheme.space20),
             ElevatedButton.icon(
-              onPressed: () {
-                Navigator.of(context).pushNamed(AppRouter.vehicleNewRoute);
+              onPressed: () async {
+                final result = await Navigator.of(context)
+                    .pushNamed(AppRouter.vehicleNewRoute);
+                if (result is Vehicle && mounted) {
+                  if (!_matchesActiveFilters(result)) {
+                    _clearFilters();
+                  }
+                }
               },
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Register vehicle'),

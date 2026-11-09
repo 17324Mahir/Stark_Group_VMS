@@ -5,4 +5,3 @@ public enum VehicleStatus {
     INACTIVE,
     MAINTENANCE
 }
-

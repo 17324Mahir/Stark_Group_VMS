@@ -9,4 +9,3 @@ CREATE TABLE IF NOT EXISTS vehicles (
     CONSTRAINT uk_vehicles_vehicle_number UNIQUE (vehicle_number),
     CONSTRAINT chk_vehicles_status CHECK (status IN ('ACTIVE', 'INACTIVE', 'MAINTENANCE'))
 );
-

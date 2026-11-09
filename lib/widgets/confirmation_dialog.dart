@@ -67,7 +67,7 @@ class ConfirmationDialog extends StatelessWidget {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'This action will permanently remove the vehicle from the registry. Note: In-memory demo data resets upon browser refresh.',
+                      'This action permanently removes the vehicle from the fleet registry.',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppTheme.errorRed,

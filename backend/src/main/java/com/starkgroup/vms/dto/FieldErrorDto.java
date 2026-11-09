@@ -5,4 +5,3 @@ public record FieldErrorDto(
     String message
 ) {
 }
-

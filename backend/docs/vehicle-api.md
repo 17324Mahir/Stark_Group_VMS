@@ -342,3 +342,76 @@ curl -i -X POST http://localhost:8080/api/vehicles \
 curl -i -X DELETE http://localhost:8080/api/vehicles/1
 ```
 
+---
+
+## 8. Integrated Backend & Database Testing Workflow
+
+The Stark Group VMS test suite includes comprehensive integration tests (`VehicleApiIntegrationTest`) verifying that real HTTP requests pass through Spring Security, controllers, services, repositories, and the underlying PostgreSQL database.
+
+### 8.1. Prerequisites & Environment Variables
+
+- **Database**: Local PostgreSQL instance with `stark_vms_db` running on port 5432.
+- **Migrations**: Managed by Flyway (`src/main/resources/db/migration/V1__create_vehicles_table.sql`).
+- **Schema Validation**: Hibernate validates existing schema on startup (`spring.jpa.hibernate.ddl-auto=validate`).
+- **Authentication**: Stateless Bearer JWT with HMAC-SHA256 signature and BCrypt-hashed credentials.
+
+Environment variable keys (keep values externalized and never commit real secrets):
+- `DB_URL`: JDBC connection URL (default in tests: `jdbc:postgresql://localhost:5432/stark_vms_db`).
+- `DB_USERNAME`: Database user (default in tests: `vms_user`).
+- `DB_PASSWORD`: Database password.
+- `JWT_SECRET`: Secret key for HMAC-SHA256 signing (minimum 32 characters).
+- `JWT_EXPIRATION_SECONDS`: Token time-to-live in seconds (default: 900).
+- `JWT_ISSUER`: Issuer identifier (`stark-vms-backend`).
+- `JWT_AUDIENCE`: Target audience (`stark-vms-frontend`).
+- `COURSE_USER_EMAIL`: Course test account email (`test@starkgroup.test`).
+- `COURSE_USER_PASSWORD_HASH`: BCrypt hash of the course user password.
+
+### 8.2. Focused and Full Test Execution Commands
+
+```bash
+# Run focused HTTP + PostgreSQL integration tests
+cd backend
+./gradlew test --tests "com.starkgroup.vms.controller.VehicleApiIntegrationTest" --rerun --no-daemon
+
+# Run all backend unit, slice, and integration tests
+./gradlew test --rerun --no-daemon
+
+# Run clean production build
+./gradlew build -x test --no-daemon
+```
+
+### 8.3. Verified Scenarios & HTTP Status Codes
+
+| Scenario | HTTP Method & Path | Expected Status | Description & Verifications |
+|---|---|---|---|
+| Authenticate | `POST /api/auth/login` | `200 OK` | Verifies course credentials and issues signed JWT Bearer token |
+| Create Vehicle | `POST /api/vehicles` | `201 Created` | Validates Location header, generated ID, canonical fields; direct SQL asserts row in PostgreSQL |
+| Read Fleet List | `GET /api/vehicles` | `200 OK` | Confirms created record appears exactly once in JSON array |
+| Read One Vehicle | `GET /api/vehicles/{id}` | `200 OK` | Fetches vehicle by ID and checks response fields |
+| Complete Update | `PUT /api/vehicles/{id}` | `200 OK` | Updates company/model/status, preserves ID; direct SQL asserts updated database row |
+| Delete Vehicle | `DELETE /api/vehicles/{id}` | `204 No Content` | Asserts empty response body; direct SQL asserts row count is 0 |
+| Confirm Absence | `GET /api/vehicles/{id}` | `404 Not Found` | Code `VEHICLE_NOT_FOUND`; vehicle absent from fleet list |
+| Duplicate Create | `POST /api/vehicles` | `409 Conflict` | Code `DUPLICATE_VEHICLE_NUMBER`; whitespace/case normalized duplicates rejected; no extra DB rows |
+| Duplicate Update | `PUT /api/vehicles/{id}` | `409 Conflict` | Rejects updating to another vehicle's number; both DB records remain unchanged |
+| Keep Own Number | `PUT /api/vehicles/{id}` | `200 OK` | Updating non-number fields while retaining own number succeeds |
+| Validation Errors | `POST /api/vehicles` | `400 Bad Request` | Blank fields, overlength text, invalid status enum, malformed JSON; direct SQL asserts 0 mutations |
+| Missing Resource | `GET /api/vehicles/{id}` | `404 Not Found` | Valid positive non-existent ID returns `VEHICLE_NOT_FOUND` |
+| Invalid ID Format | `GET /api/vehicles/abc` | `400 Bad Request` | Type mismatch returns `INVALID_ARGUMENT_TYPE` |
+| Non-positive ID | `GET /api/vehicles/-1` | `400 Bad Request` | Path constraint returns `VALIDATION_FAILED` with `"Vehicle ID must be a positive number"` |
+| Unauthenticated Access | Any `/api/vehicles/**` | `401 Unauthorized` | Code `UNAUTHORIZED`; standardized ErrorResponse without leaking stack traces |
+
+### 8.4. Direct SQL Verification & Safe Test Cleanup
+
+- **Direct SQL Assertions**: Tests inject `org.springframework.jdbc.core.JdbcTemplate` to execute read-only native SQL queries (`SELECT count(*)...`, `SELECT vehicle_number, company...`) verifying committed PostgreSQL state immediately following HTTP calls, independently of JPA Hibernate caching.
+- **Test-Data Cleanup**: All created IDs are tracked in `createdVehicleIds`. The `@AfterEach` teardown executes parameterized SQL (`DELETE FROM vehicles WHERE id = ?`), ensuring full cleanup even after test assertion failures without deleting unrelated records or resetting sequence generators.
+
+### 8.5. Troubleshooting Guidance
+
+1. **Database Connection Refused**:
+   - Check if PostgreSQL service is running: `pg_isready -h localhost -p 5432`.
+   - Verify test database exists: `psql -U vms_user -d stark_vms_db -c '\dt'`.
+2. **Invalid Credentials on Login (401)**:
+   - Ensure the raw password provided matches the BCrypt hash configured in `app.security.course-user.password-hash`.
+   - Use `./gradlew hashPassword` to generate a fresh hash if updating credentials.
+3. **Short JWT Secret Key (Startup Failure)**:
+   - Ensure `JWT_SECRET` is at least 32 characters (256 bits).

@@ -79,13 +79,14 @@ class VehicleRepository extends ChangeNotifier {
   /// [silent] keeps the current list displayed without showing a full-page spinner.
   Future<void> fetchVehicles({bool silent = false}) async {
     if (_isFake) return;
+    if (_isLoading) return;
 
     final fetchId = ++_fetchCounter;
+    _isLoading = true;
     if (!silent) {
-      _isLoading = true;
       _errorMessage = null;
-      notifyListeners();
     }
+    notifyListeners();
 
     try {
       final serverVehicles = await _apiClient!.getVehicles();
@@ -108,9 +109,33 @@ class VehicleRepository extends ChangeNotifier {
     }
   }
 
+  /// Fetches an individual vehicle from `GET /api/vehicles/{id}` and updates local cache.
+  Future<Vehicle> fetchVehicleById(int id) async {
+    if (_isFake) {
+      final local = getById(id);
+      if (local != null) return local;
+      throw const ApiException(
+        statusCode: 404,
+        code: 'VEHICLE_NOT_FOUND',
+        message: 'Vehicle not found.',
+      );
+    }
+
+    final vehicle = await _apiClient!.getVehicle(id);
+    final index = _vehicles.indexWhere((v) => v.id == vehicle.id);
+    if (index != -1) {
+      _vehicles[index] = vehicle;
+    } else {
+      _vehicles.insert(0, vehicle);
+    }
+    notifyListeners();
+    return vehicle;
+  }
+
   /// Registers a new vehicle with the backend and updates local state.
   Future<Vehicle> add(Vehicle vehicle) async {
     if (_isFake) {
+      _vehicles.removeWhere((v) => v.id == vehicle.id && v.id != 0);
       _vehicles.insert(0, vehicle);
       notifyListeners();
       return vehicle;
@@ -118,6 +143,7 @@ class VehicleRepository extends ChangeNotifier {
 
     final created =
         await _apiClient!.createVehicle(vehicle.toCreateUpdateJson());
+    _vehicles.removeWhere((v) => v.id == created.id);
     _vehicles.insert(0, created);
     notifyListeners();
     return created;

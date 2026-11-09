@@ -33,4 +33,3 @@ class VehicleNumberNormalizerTest {
         assertEquals("DHAKA-GA-11", VehicleNumberNormalizer.normalize(" dhaka-ga-11 "));
     }
 }
-

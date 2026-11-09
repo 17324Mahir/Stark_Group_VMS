@@ -22,4 +22,3 @@ public final class VehicleNumberNormalizer {
         return vehicleNumber.trim().toUpperCase(Locale.ROOT);
     }
 }
-

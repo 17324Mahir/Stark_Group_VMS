@@ -1,15 +1,23 @@
 import 'package:flutter/material.dart';
 import 'core/theme/app_theme.dart';
+import 'data/auth/auth_service.dart';
 import 'router/app_router.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Start background keep-alive heartbeat to wake up backend and keep it warm
+  AuthService.instance.startKeepAlive();
   runApp(const StarkVmsApp());
 }
 
 /// Root application widget for Stark Group Vehicle Management System (VMS).
 class StarkVmsApp extends StatelessWidget {
-  const StarkVmsApp({super.key});
+  final String initialRoute;
+
+  const StarkVmsApp({
+    super.key,
+    this.initialRoute = AppRouter.homeRoute,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -17,7 +25,7 @@ class StarkVmsApp extends StatelessWidget {
       title: 'Stark Group - Vehicle Management System',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      initialRoute: AppRouter.loginRoute,
+      initialRoute: initialRoute,
       onGenerateRoute: AppRouter.generateRoute,
     );
   }

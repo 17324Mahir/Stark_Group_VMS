@@ -103,4 +103,3 @@ class VehiclePersistenceTest {
         }, "Database check constraint chk_vehicles_status must reject unsupported status values");
     }
 }
-
