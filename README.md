@@ -8,10 +8,12 @@ An enterprise-grade, full-stack vehicle fleet management solution for Stark Grou
 
 * **Frontend (Netlify):** https://vms-frontend-stark.netlify.app
 * **Backend API (Render):** https://vms-backend-i7bt.onrender.com
-* **Test User Account:**
+* **Test User Account (Assignment Evaluation):**
   * **Email:** `test@starkgroup.test`
   * **Password:** `Password123!`
-  * *Note:* Logging in with this test account displays the 4 pre-seeded testcase vehicles (`STK-001`, `STK-003`, `STK-004`, `STK-005`). Any newly registered account starts with an empty fleet (`[]`) due to per-user data isolation.
+  * *Fleet Data Behavior:* Logging in with this test account displays the 4 pre-seeded testcase vehicles (`STK-001`, `STK-003`, `STK-004`, `STK-005`). Any newly registered account starts with a clean, empty fleet (`[]`) due to per-user data isolation.
+  * > [!NOTE]
+  * > **Security & Compliance Note:** These test credentials are provided solely for academic review and assignment evaluation purposes so reviewers can test the application and review the pre-populated fleet immediately. In a production environment, credentials and secrets would never be disclosed in public repository documentation; authentication would be strictly managed through secure identity providers, secrets managers, and environment variables.
 
 ---
 
